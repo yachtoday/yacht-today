@@ -1,4 +1,4 @@
-# Marea — alquiler náutico entre particulares
+# Yacht Today — alquiler náutico entre particulares
 
 App web (Vite + React) para alquilar barcos, vivir experiencias (pesca, buceo, SUP, kayak)
 y alquilar material náutico, con o sin patrón. Comisión de servicio del 15% pagada por quien alquila.

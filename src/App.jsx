@@ -1,10 +1,15 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
+import { supabase } from "./lib/supabaseClient";
+import { listarAnunciosPublicados, listarMisAnuncios, crearAnuncio, subirFotos, eliminarAnuncio, listarAnunciosEnRevision, cambiarEstadoAnuncio } from "./lib/anuncios";
+import { listarMisReservas, listarReservasRecibidas, actualizarReserva } from "./lib/reservas";
+import { iniciarPago, conectarCobros } from "./lib/pagos";
 import {
   Anchor, Search, MapPin, Users, Star, Ship, Waves, ChevronRight, Check,
   Plus, ArrowLeft, Ruler, Gauge, ShieldCheck, Menu, X, Sailboat, Info,
   User, Mail, Phone, Lock, BadgeCheck, LogOut, Heart, Share2, Minus,
   CalendarCheck, ClipboardList, Sparkles, Fish, Wind, Gift, Trophy,
   Clock, Award, Waypoints, Handshake, Zap, CloudRain,
+  ChevronDown, MessageCircle, HelpCircle, RotateCcw, Trash2, Wrench,
 } from "lucide-react";
 import fotoHero from "./assets/fotos/hero-845.jpg";
 import fotoMarina from "./assets/fotos/marina-5075093.jpg";
@@ -30,6 +35,13 @@ const COMISION = 0.15;
 const PATRON_HORA = 30;
 const PATRON_DIA = 180;
 const FIANZA_PCT = 0.2;
+
+// Antelación mínima de reservas. Mantener sincronizado con las mismas
+// constantes en supabase/functions/crear-pago/index.ts.
+const AVISO_MIN_HORAS = 3;
+const AVISO_MIN_HORAS_EXP = 24;
+const NOCHE_DESDE_HORA = 22;
+const NOCHE_HASTA_HORA = 8;
 
 /* Fotos de fondo (banco libre de derechos Pexels, alojadas localmente en
    src/assets/fotos. Provisionales hasta tener fotos reales de las
@@ -69,6 +81,12 @@ const dtISO = (fecha, hora = HORA_INICIO) => `${fecha}T${hora}:00`;
 const sumarHoras = (iso, horas) => new Date(new Date(iso).getTime() + horas * 3600000).toISOString();
 const finDeDiaISO = (fecha) => `${fecha}T23:59:59`;
 const parseDuracionHoras = (txt) => { const n = parseFloat(txt); return isFinite(n) && n > 0 ? n : 2; };
+const addDiasISO = (fechaISO, n) => new Date(new Date(fechaISO).getTime() + n * 86400000).toISOString().slice(0, 10);
+const esDeNoche = (ahora) => { const h = ahora.getHours(); return h >= NOCHE_DESDE_HORA || h < NOCHE_HASTA_HORA; };
+const avisoMinHorasDe = (item) => {
+  const base = item.clase === "experiencia" ? AVISO_MIN_HORAS_EXP : AVISO_MIN_HORAS;
+  return (typeof item.aviso_minimo_horas === "number" && item.aviso_minimo_horas > 0) ? item.aviso_minimo_horas : base;
+};
 
 /* ── AEMET: comprobación real de mal tiempo por zona/fecha ──────────
    Municipio representativo de cada zona (códigos INE verificados contra
@@ -105,6 +123,13 @@ const eur = (n) => new Intl.NumberFormat("es-ES", { style: "currency", currency:
 const iniciales = (n = "") => n.trim().split(/\s+/).slice(0, 2).map((w) => (w[0] || "").toUpperCase()).join("") || "U";
 const saludo = () => { const h = new Date().getHours(); return h < 12 ? "Buenos días" : h < 20 ? "Buenas tardes" : "Buenas noches"; };
 const ROL_LABEL = { cliente: "Cliente", propietario: "Propietario", ambas: "Cliente y propietario" };
+const ADMIN_EMAIL = "yachtoday@gmail.com";
+const usuarioDeSesion = (session) => {
+  const u = session?.user;
+  if (!u) return null;
+  const meta = u.user_metadata || {};
+  return { id: u.id, nombre: meta.nombre || u.email.split("@")[0], email: u.email, telefono: meta.telefono || "", rol: meta.rol || "ambas", stripeAccountId: meta.stripe_account_id || null };
+};
 
 /* helpers de presentación por clase (barco | experiencia | material) */
 const precioBase = (x) => (x.clase === "experiencia" ? x.persona : x.dia);
@@ -121,51 +146,35 @@ function visualDe(x) {
 }
 
 /* ── Logo ────────────────────────────────────────────────────────── */
-const LogoMarea = ({ size = 38 }) => (
+const LogoYachtToday = ({ size = 38 }) => (
   <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true">
     <rect width="40" height="40" rx="11" fill="#0F2732" />
-    <path d="M21 7.5 L21 25 L9.5 25 Z" fill="#F5EFE4" />
-    <path d="M23.4 12.5 L23.4 25 L31.5 25 Z" fill="#7FB2CE" />
-    <path d="M7.5 28 Q20 34.4 32.5 28 L29.8 31.8 Q20 36.4 10.2 31.8 Z" fill="#F5EFE4" />
+    <path d="M9 36 Q20 34.3 31 36" stroke="#7FB2CE" strokeWidth="1.3" fill="none" strokeLinecap="round" opacity=".5" />
+    <path d="M6 33 Q20 30 34 33" stroke="#7FB2CE" strokeWidth="1.7" fill="none" strokeLinecap="round" opacity=".9" />
+    <path d="M7 26 Q20 22 33 26 Q27 30 20 30 Q13 30 7 26 Z" fill="#F5EFE4" />
+    <rect x="16" y="17.5" width="8" height="6" rx="1.6" fill="#7FB2CE" />
+    <line x1="20" y1="10" x2="20" y2="17.5" stroke="#F5EFE4" strokeWidth="1.2" strokeLinecap="round" />
+    <path d="M20.6 10 L26 12.2 L20.6 14.4 Z" fill="#E6C15F" />
   </svg>
 );
 
 /* ── Datos ───────────────────────────────────────────────────────── */
-const BARCOS = [
-  { id: 1, clase: "barco", nombre: "Quicksilver 675 Open", tipo: "Motora", puerto: "Grao de Castellón", zona: "C. Valenciana", plazas: 7, eslora: 6.75, potencia: 150, anio: 2019, lista: "7ª", hue: 205, hora: 65, dia: 380, patron: "opcional", rating: 4.9, reviews: 42, desc: "Lancha ágil y familiar, perfecta para un día de calas en el Levante. Solárium a proa, ducha de popa y nevera." },
-  { id: 2, clase: "barco", nombre: "Bavaria Cruiser 34", tipo: "Velero", puerto: "Port de Sóller, Mallorca", zona: "Baleares", plazas: 8, eslora: 10.5, potencia: 30, anio: 2015, lista: "6ª", hue: 210, hora: 90, dia: 520, patron: "incluido", rating: 4.8, reviews: 31, desc: "Velero cómodo para navegar a vela por la Tramuntana. Se alquila siempre con patrón titulado." },
-  { id: 3, clase: "barco", nombre: "Zodiac Medline 580", tipo: "Neumática", puerto: "Palamós, Girona", zona: "Costa Brava", plazas: 6, eslora: 5.8, potencia: 100, anio: 2021, lista: "7ª", hue: 195, hora: 50, dia: 300, patron: "no", rating: 4.7, reviews: 58, desc: "Semirrígida estable y seca para descubrir las calas de la Costa Brava. Se maneja con licencia de navegación, sin titulación." },
-  { id: 4, clase: "barco", nombre: "Sea Ray Sundancer 290", tipo: "Yate", puerto: "Puerto Banús, Marbella", zona: "Costa del Sol", plazas: 8, eslora: 9.0, potencia: 260, anio: 2018, lista: "6ª", hue: 218, hora: 140, dia: 900, patron: "incluido", rating: 5.0, reviews: 19, desc: "Yate con camarote, cocina y baño. Se entrega con patrón, para celebraciones o un día premium." },
-  { id: 5, clase: "barco", nombre: "Yamaha VX Cruiser", tipo: "Moto de agua", puerto: "Las Palmas de G.C.", zona: "Canarias", plazas: 2, eslora: 3.3, potencia: 125, anio: 2022, lista: "7ª", hue: 25, hora: 45, dia: 190, patron: "no", rating: 4.6, reviews: 73, desc: "Moto de agua fácil y divertida en aguas atlánticas. Con licencia básica te la llevas." },
-  { id: 6, clase: "barco", nombre: "Llaüt tradicional 8m", tipo: "Tradicional", puerto: "Dénia, Alicante", zona: "Costa Blanca", plazas: 5, eslora: 8.0, potencia: 40, anio: 2010, lista: "6ª", hue: 38, hora: 55, dia: 330, patron: "incluido", rating: 4.9, reviews: 27, desc: "Llaüt de líneas clásicas para navegar sin prisa, con patrón local que conoce cada cala." },
-  { id: 7, clase: "barco", nombre: "Beneteau Antares 8", tipo: "Motora", puerto: "Vigo, Pontevedra", zona: "Rías Baixas", plazas: 6, eslora: 7.9, potencia: 220, anio: 2020, lista: "7ª", hue: 200, hora: 80, dia: 470, patron: "opcional", rating: 4.8, reviews: 24, desc: "Motora cabinada perfecta para recorrer la ría y las Cíes. Con o sin patrón." },
-  { id: 8, clase: "barco", nombre: "Lagoon 42 Catamarán", tipo: "Catamarán", puerto: "Puerto de Mahón, Menorca", zona: "Baleares", plazas: 10, eslora: 12.6, potencia: 60, anio: 2019, lista: "6ª", hue: 208, hora: 180, dia: 1200, patron: "incluido", rating: 5.0, reviews: 64, desc: "Catamarán espacioso y estable, con 4 camarotes. Se entrega con patrón rumbo a Cala en Bosc." },
-  { id: 9, clase: "barco", nombre: "Jeanneau Cap Camarat 6.5", tipo: "Motora", puerto: "Puerto de Alicante", zona: "Costa Blanca", plazas: 5, eslora: 6.5, potencia: 150, anio: 2021, lista: "7ª", hue: 202, hora: 58, dia: 340, patron: "opcional", rating: 4.6, reviews: 33, desc: "Lancha versátil y económica, ideal para grupos pequeños. Sin patrón con la licencia de navegación." },
-  { id: 10, clase: "barco", nombre: "Dufour 350 Grand Large", tipo: "Velero", puerto: "Marina Real, Valencia", zona: "C. Valenciana", plazas: 8, eslora: 10.3, potencia: 30, anio: 2017, lista: "6ª", hue: 214, hora: 95, dia: 540, patron: "incluido", rating: 4.9, reviews: 21, desc: "Velero moderno y luminoso, salida desde la Marina Real, con patrón titulado." },
-];
-
-const EXPERIENCIAS = [
-  { id: 101, clase: "experiencia", actividad: "Pesca", nombre: "Jornada de pesca al curricán", puerto: "Grao de Castellón", zona: "C. Valenciana", plazas: 5, duracion: "4 h", persona: 55, anfitrion: "Carlos", rating: 4.9, reviews: 38, hue: 205, desc: "Salimos al amanecer a pescar al curricán con todo el equipo incluido. Yo llevo el barco, tú disfrutas. Apto para principiantes." },
-  { id: 102, clase: "experiencia", actividad: "Submarinismo", nombre: "Bautizo de buceo en las Islas Medas", puerto: "L'Estartit, Girona", zona: "Costa Brava", plazas: 4, duracion: "3 h", persona: 75, anfitrion: "Marta", rating: 5.0, reviews: 52, hue: 195, desc: "Inmersión guiada en una de las mejores reservas marinas del Mediterráneo. Equipo y titulado incluidos." },
-  { id: 103, clase: "experiencia", actividad: "Paddle surf", nombre: "Ruta en paddle surf al atardecer", puerto: "Palma, Mallorca", zona: "Baleares", plazas: 8, duracion: "2 h", persona: 30, anfitrion: "Nil", rating: 4.8, reviews: 41, hue: 30, desc: "Ruta guiada en SUP bordeando la costa al atardecer. Tablas, chaleco y monitor incluidos." },
-  { id: 104, clase: "experiencia", actividad: "Kayak", nombre: "Kayak entre cuevas y calas", puerto: "Xàbia, Alicante", zona: "Costa Blanca", plazas: 6, duracion: "3 h", persona: 35, anfitrion: "Lucía", rating: 4.9, reviews: 29, hue: 200, desc: "Explora cuevas y calas escondidas en kayak con guía local. Incluye snorkel y avituallamiento." },
-  { id: 105, clase: "experiencia", actividad: "Puesta de sol", nombre: "Aperitivo náutico al atardecer", puerto: "Puerto Banús, Marbella", zona: "Costa del Sol", plazas: 8, duracion: "2.5 h", persona: 60, anfitrion: "Diego", rating: 4.9, reviews: 47, hue: 218, desc: "Navegación tranquila al atardecer con cava y aperitivo a bordo. Yo piloto, vosotros brindáis." },
-  { id: 106, clase: "experiencia", actividad: "Pesca", nombre: "Pesca de altura en las Rías", puerto: "Vigo, Pontevedra", zona: "Rías Baixas", plazas: 4, duracion: "5 h", persona: 70, anfitrion: "Manuel", rating: 4.8, reviews: 22, hue: 200, desc: "Salida de pesca de altura con patrón experto. Cañas, cebo y licencia incluidos." },
-];
-
-const MATERIAL = [
-  { id: 201, clase: "material", tipo: "Paddle surf", nombre: "Tabla SUP hinchable Red Paddle 10'6\"", puerto: "Peñíscola, Castellón", zona: "C. Valenciana", hora: 12, dia: 35, rating: 4.7, reviews: 18, hue: 32, desc: "Tabla de paddle surf todoterreno con remo, hinchador y quilla. Perfecta para calas tranquilas." },
-  { id: 202, clase: "material", tipo: "Kayak", nombre: "Kayak doble sit-on-top", puerto: "Sanxenxo, Pontevedra", zona: "Rías Baixas", hora: 14, dia: 40, rating: 4.8, reviews: 22, hue: 198, desc: "Kayak biplaza estable con palas y chalecos. Ideal para explorar la ría en pareja." },
-  { id: 203, clase: "material", tipo: "Paddle surf", nombre: "Pack 2 tablas SUP rígidas", puerto: "Sitges, Barcelona", zona: "Costa Brava", hora: 20, dia: 55, rating: 4.6, reviews: 12, hue: 190, desc: "Dos tablas rígidas de gama alta con remos de carbono. Se entregan en playa." },
-  { id: 204, clase: "material", tipo: "Kayak", nombre: "Kayak individual de travesía", puerto: "Los Cristianos, Tenerife", zona: "Canarias", hora: 13, dia: 38, rating: 4.9, reviews: 16, hue: 205, desc: "Kayak de travesía ligero y rápido. Chaleco y bidón estanco incluidos." },
-];
-
-const TODOS = [...BARCOS, ...EXPERIENCIAS, ...MATERIAL];
+/* Los anuncios (barcos, experiencias, material) ya no están fijos aquí:
+   viven en la tabla `anuncios` de Supabase — ver src/lib/anuncios.js. */
 
 const TIPOS = ["Motora", "Velero", "Neumática", "Yate", "Moto de agua", "Tradicional", "Catamarán"];
 const ACTIVIDADES = ["Pesca", "Submarinismo", "Paddle surf", "Kayak", "Puesta de sol"];
 const MATERIALES = ["Paddle surf", "Kayak"];
 const ZONAS = ["Todas", "Baleares", "Costa Brava", "C. Valenciana", "Costa Blanca", "Costa del Sol", "Rías Baixas", "Canarias"];
+
+// Equipamiento y servicios: lista de opciones típicas que el propietario puede
+// marcar al publicar, además de añadir las suyas propias por texto libre.
+const EQUIPAMIENTO_TIPICO = {
+  barco: ["Chalecos salvavidas", "Nevera a bordo", "Equipo de fondeo", "Ducha de popa", "Combustible incluido", "Equipo de snorkel", "Toallas", "Altavoz Bluetooth"],
+  experiencia: ["Anfitrión / monitor", "Equipo necesario", "Seguro a bordo", "Briefing de seguridad", "Avituallamiento", "Fotos del día", "Transporte desde el puerto"],
+  material: ["Remo / pala", "Chaleco salvavidas", "Hinchador (si aplica)", "Entrega en playa", "Bidón estanco", "Correa de sujeción (leash)", "Funda de transporte"],
+};
+const CANCELACION_NOTA = "Cancela sin recargo hasta 48 h antes";
 const ROLES = [{ v: "cliente", t: "Alquilar o vivir experiencias" }, { v: "propietario", t: "Publicar barco / experiencia / material" }, { v: "ambas", t: "Las dos cosas" }];
 const CLASES = [{ v: "todo", t: "Todo" }, { v: "barco", t: "Barcos" }, { v: "experiencia", t: "Experiencias" }, { v: "material", t: "SUP y kayak" }];
 const CATEGORIAS = [
@@ -192,10 +201,10 @@ function Silueta({ v }) {
 }
 function Foto({ item, alto = 200, tag = true }) {
   const h = item.hue;
+  const foto = item.fotos?.[0];
   return (
-    <div className="foto" style={{ height: alto, background: `linear-gradient(165deg, hsl(${h} 38% 34%), hsl(${h + 12} 45% 18%))` }}>
-      <div className="foto-sol" />
-      <Silueta v={visualDe(item)} />
+    <div className="foto" style={{ height: alto, background: foto ? "#0F2732" : `linear-gradient(165deg, hsl(${h} 38% 34%), hsl(${h + 12} 45% 18%))` }}>
+      {foto ? <img className="foto-img" src={foto} alt={item.nombre} loading="lazy" /> : (<><div className="foto-sol" /><Silueta v={visualDe(item)} /></>)}
       {tag && <span className="foto-tag">{etiqueta(item)}</span>}
     </div>
   );
@@ -229,7 +238,7 @@ function Tarjeta({ item, onOpen }) {
 }
 
 /* ── Ficha + reserva ─────────────────────────────────────────────── */
-function Ficha({ item, onBack, onAbrir, usuario, numReservas, esFavorito, onToggleFav, onNecesitaCuenta, onReservado }) {
+function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, onNecesitaCuenta }) {
   const exp = item.clase === "experiencia";
   const mat = item.clase === "material";
   const [modo, setModo] = useState("dia");
@@ -240,7 +249,8 @@ function Ficha({ item, onBack, onAbrir, usuario, numReservas, esFavorito, onTogg
   const [fechaExp, setFechaExp] = useState("2026-07-18");
   const [personas, setPersonas] = useState(2);
   const [conPatron, setConPatron] = useState(item.patron === "incluido");
-  const [reservado, setReservado] = useState(false);
+  const [enviandoReserva, setEnviandoReserva] = useState(false);
+  const [errorReserva, setErrorReserva] = useState("");
   const [licencia, setLicencia] = useState("");
   const [consientoLicencia, setConsientoLicencia] = useState(false);
   const { estado: verifLicencia, iniciar: iniciarVerifLicencia } = useVerificacionAutomatica();
@@ -269,15 +279,38 @@ function Ficha({ item, onBack, onAbrir, usuario, numReservas, esFavorito, onTogg
     : modo === "horas" ? sumarHoras(inicioISO, horas)
       : finDeDiaISO(fin);
 
+  // Antelación mínima de reservas: no memoizar `ahora` (a diferencia de `hoy`) —
+  // si el usuario se queda mirando la ficha y cruza las 22:00, debe reflejarse.
+  const ahora = new Date();
+  const avisoMinHoras = avisoMinHorasDe(item);
+  const avisoInsuficiente = (new Date(inicioISO).getTime() - ahora.getTime()) < avisoMinHoras * 3600000;
+  const bloqueoNocturno = esDeNoche(ahora) && inicioISO.slice(0, 10) < addDiasISO(hoy, 2);
+  const avisoInvalido = avisoInsuficiente || bloqueoNocturno;
+
   const resumenTxt = exp ? `${personas} ${personas > 1 ? "plazas" : "plaza"}`
     : (modo === "horas" ? `${horas} h` : `${dias} ${dias > 1 ? "días" : "día"}`) + (patronActivo ? " · con patrón" : "");
 
-  const reservar = () => {
+  const reservar = async () => {
     if (!usuario) { onNecesitaCuenta(); return; }
     if (fechaInvalida) return;
+    const ahoraCheck = new Date();
+    const avisoInvalidoAhora = ((new Date(inicioISO).getTime() - ahoraCheck.getTime()) < avisoMinHoras * 3600000)
+      || (esDeNoche(ahoraCheck) && inicioISO.slice(0, 10) < addDiasISO(hoy, 2));
+    if (avisoInvalidoAhora) return;
     if (requiereFianza && verifLicencia !== "verificado") return;
-    setReservado(true);
-    onReservado({ id: Date.now(), barco: item.nombre, puerto: item.puerto, zona: item.zona, detalle: resumenTxt, subtotal, servicio, total, fianza, fianzaEstado: requiereFianza ? "retenida" : null, licenciaVerificada: requiereFianza, inicioISO, finISO, estado: "confirmada" });
+    setEnviandoReserva(true);
+    setErrorReserva("");
+    try {
+      const url = await iniciarPago({
+        anuncioId: item.id, modo, horas, dias, personas,
+        conPatron: !exp && !mat && item.patron === "opcional" && conPatron,
+        inicioISO, finISO, detalle: resumenTxt,
+      });
+      window.location.href = url;
+    } catch (err) {
+      setErrorReserva(err.message || "No se ha podido iniciar el pago. Inténtalo de nuevo.");
+      setEnviandoReserva(false);
+    }
   };
 
   const specs = exp
@@ -286,9 +319,10 @@ function Ficha({ item, onBack, onAbrir, usuario, numReservas, esFavorito, onTogg
       ? [[Wind, "Tipo", item.tipo], [Anchor, "Licencia", "No necesaria"], [MapPin, "Entrega", "En playa"], [Check, "Incluye", "Remo y chaleco"]]
       : [[Users, "Plazas", item.plazas], [Ruler, "Eslora", `${item.eslora} m`], [Gauge, "Potencia", `${item.potencia} cv`], [ShieldCheck, "Lista", item.lista]];
 
-  const incluye = exp ? ["Anfitrión / monitor", "Equipo necesario", "Seguro a bordo", "Briefing de seguridad", "Avituallamiento", "Cancela sin recargo hasta 48 h antes"]
-    : mat ? ["Remo / pala", "Chaleco salvavidas", "Hinchador (si aplica)", "Entrega en playa", "Bidón estanco", "Cancela sin recargo hasta 48 h antes"]
-      : ["Chalecos salvavidas", "Nevera a bordo", "Equipo de fondeo", "Ducha de popa", "Combustible incluido", "Cancela sin recargo hasta 48 h antes"];
+  const equipamientoBase = (item.equipamiento && item.equipamiento.length)
+    ? item.equipamiento
+    : EQUIPAMIENTO_TIPICO[item.clase].slice(0, 5);
+  const incluye = [...equipamientoBase, CANCELACION_NOTA];
 
   const tituloSobre = exp ? "Sobre la experiencia" : mat ? "Sobre el material" : "Sobre esta embarcación";
   const tituloIncluye = exp || mat ? "Qué incluye" : "Equipamiento y servicios";
@@ -312,9 +346,12 @@ function Ficha({ item, onBack, onAbrir, usuario, numReservas, esFavorito, onTogg
         <div>
           <Foto item={item} alto={360} tag={false} />
           <div className="galeria">
-            {(exp ? ["A bordo", "En acción", "El grupo", "El plan"] : mat ? ["Detalle", "En uso", "Entrega", "Extras"] : ["Cubierta", "Camarote", "Salón", "Cocina"]).map((n, i) => (
-              <div key={n} className="mini" style={{ background: `linear-gradient(160deg, hsl(${item.hue + i * 6} 34% ${32 - i * 3}%), hsl(${item.hue + 14} 42% 18%))` }}><span>{n}</span></div>
-            ))}
+            {(exp ? ["A bordo", "En acción", "El grupo", "El plan"] : mat ? ["Detalle", "En uso", "Entrega", "Extras"] : ["Cubierta", "Camarote", "Salón", "Cocina"]).map((n, i) => {
+              const foto = item.fotos?.[i + 1];
+              return foto
+                ? <div key={n} className="mini"><img className="foto-img" src={foto} alt={`${item.nombre} — ${n}`} loading="lazy" /></div>
+                : <div key={n} className="mini" style={{ background: `linear-gradient(160deg, hsl(${item.hue + i * 6} 34% ${32 - i * 3}%), hsl(${item.hue + 14} 42% 18%))` }}><span>{n}</span></div>;
+            })}
           </div>
           <div className="specs">{specs.map(([Ic, k, v]) => <Spec key={k} icon={Ic} k={k} v={v} />)}</div>
           <h2 className="serif bloque-tit">{tituloSobre}</h2>
@@ -324,8 +361,7 @@ function Ficha({ item, onBack, onAbrir, usuario, numReservas, esFavorito, onTogg
         </div>
 
         <aside className="reserva">
-          {!reservado ? (
-            <>
+          <>
               <div className="reserva-top">
                 <span className="precio grande"><b>{eur(exp ? item.persona : (modo === "horas" ? item.hora : item.dia))}</b><small>/{exp ? "persona" : modo === "horas" ? "hora" : "día"}</small></span>
                 <span className="rating"><Star size={13} fill="currentColor" /> {item.rating.toFixed(1)}</span>
@@ -342,7 +378,13 @@ function Ficha({ item, onBack, onAbrir, usuario, numReservas, esFavorito, onTogg
                     </div>
                   </div>
                   <p className="mini-nota">Máx. {item.plazas} personas · anfitrión incluido</p>
+                  <p className="mini-nota">Reserva con al menos {avisoMinHoras} h de antelación. Si reservas entre las 22:00 y las 8:00, el inicio debe ser como muy pronto pasado mañana.</p>
                   {fechaInvalida && <p className="mini-nota mini-nota-error">No se puede reservar en fechas pasadas.</p>}
+                  {!fechaInvalida && avisoInvalido && (
+                    <p className="mini-nota mini-nota-error">{bloqueoNocturno
+                      ? "Son más de las 22:00: esta reserva debe empezar como muy pronto pasado mañana."
+                      : `Esta experiencia requiere reservar con al menos ${avisoMinHoras} horas de antelación.`}</p>
+                  )}
                 </>
               ) : (
                 <>
@@ -360,13 +402,25 @@ function Ficha({ item, onBack, onAbrir, usuario, numReservas, esFavorito, onTogg
                         }} /></label>
                         <label><span>Fin</span><input type="date" min={inicio || hoy} value={fin} onChange={(e) => setFin(e.target.value)} /></label>
                       </div>
+                      <p className="mini-nota">Reserva con al menos {avisoMinHoras} h de antelación. Si reservas entre las 22:00 y las 8:00, el inicio debe ser como muy pronto pasado mañana.</p>
                       {fechaInvalida && <p className="mini-nota mini-nota-error">La fecha de fin debe ser posterior a la de inicio, y no se puede reservar en fechas pasadas.</p>}
+                      {!fechaInvalida && avisoInvalido && (
+                        <p className="mini-nota mini-nota-error">{bloqueoNocturno
+                          ? "Son más de las 22:00: esta reserva debe empezar como muy pronto pasado mañana."
+                          : `Este anuncio requiere reservar con al menos ${avisoMinHoras} horas de antelación.`}</p>
+                      )}
                     </>
                   ) : (
                     <>
                       <label className="campo"><span>Fecha</span><input type="date" min={hoy} value={fechaHoras} onChange={(e) => setFechaHoras(e.target.value)} /></label>
                       <label className="campo"><span>Horas ({horas})</span><input type="range" min={2} max={10} value={horas} onChange={(e) => setHoras(+e.target.value)} /></label>
+                      <p className="mini-nota">Reserva con al menos {avisoMinHoras} h de antelación. Si reservas entre las 22:00 y las 8:00, el inicio debe ser como muy pronto pasado mañana.</p>
                       {fechaInvalida && <p className="mini-nota mini-nota-error">No se puede reservar en fechas pasadas.</p>}
+                      {!fechaInvalida && avisoInvalido && (
+                        <p className="mini-nota mini-nota-error">{bloqueoNocturno
+                          ? "Son más de las 22:00: esta reserva debe empezar como muy pronto pasado mañana."
+                          : `Este anuncio requiere reservar con al menos ${avisoMinHoras} horas de antelación.`}</p>
+                      )}
                     </>
                   )}
                   {!mat && (
@@ -412,32 +466,12 @@ function Ficha({ item, onBack, onAbrir, usuario, numReservas, esFavorito, onTogg
                 </div>
               )}
 
-              <button className="btn-primario" onClick={reservar} disabled={!!usuario && (fechaInvalida || (requiereFianza && verifLicencia !== "verificado"))}>{!usuario ? "Entra para reservar" : exp ? `Reservar ${personas > 1 ? "plazas" : "plaza"}` : mat ? "Alquilar" : "Reservar ahora"}</button>
-              <p className="nota"><Info size={12} /> No se te cobrará todavía · Cancela sin recargo hasta 48 h antes</p>
+              {errorReserva && <p className="auth-error">{errorReserva}</p>}
+              <button className="btn-primario" onClick={reservar} disabled={enviandoReserva || (!!usuario && (fechaInvalida || avisoInvalido || (requiereFianza && verifLicencia !== "verificado")))}>{!usuario ? "Entra para reservar" : enviandoReserva ? "Redirigiendo a pago…" : exp ? `Reservar ${personas > 1 ? "plazas" : "plaza"}` : mat ? "Alquilar" : "Reservar ahora"}</button>
+              <p className="nota"><Info size={12} /> Pago seguro con tarjeta, PayPal, Apple Pay o Google Pay · Cancela sin recargo hasta 48 h antes</p>
             </>
-          ) : (
-            <div className="ok">
-              <div className="ok-icon"><Check size={28} strokeWidth={3} /></div>
-              <h3 className="serif">Solicitud enviada</h3>
-              <p>Hemos avisado a <strong>{item.nombre}</strong>. La verás en tu panel.</p>
-              <div className="ok-resumen"><span>{resumenTxt}</span><span>{eur(total)}</span></div>
-              {requiereFianza && <p className="mini-nota">+ {eur(fianza)} de fianza retenida hasta la revisión de entrega.</p>}
-              <button className="btn-sec" onClick={onBack}>Seguir explorando</button>
-            </div>
-          )}
         </aside>
       </div>
-
-      {reservado && (() => {
-        const mismoPuerto = EXPERIENCIAS.filter((e) => e.puerto === item.puerto && e.id !== item.id);
-        const sugeridas = (mismoPuerto.length ? mismoPuerto : EXPERIENCIAS.filter((e) => e.zona === item.zona && e.id !== item.id)).slice(0, 3);
-        return sugeridas.length > 0 && (
-          <section className="seccion">
-            <div className="sec-head"><h2 className="serif">¿Te apetece algo más {mismoPuerto.length ? `en ${lugarCorto(item)}` : `por ${item.zona}`}?</h2></div>
-            <div className="grid">{sugeridas.map((s) => <Tarjeta key={s.id} item={s} onOpen={onAbrir} />)}</div>
-          </section>
-        );
-      })()}
     </div>
   );
 }
@@ -445,6 +479,11 @@ const Spec = ({ icon: Icon, k, v }) => (<div className="spec"><Icon size={16} cl
 const Linea = ({ k, v, tachado, verde }) => (<div className={`linea ${verde ? "linea-verde" : ""}`}><span>{k}</span><span className={tachado ? "tachado" : ""}>{v}</span></div>);
 
 /* ── Modal cuenta ────────────────────────────────────────────────── */
+const ERRORES_AUTH = {
+  "Invalid login credentials": "Email o contraseña incorrectos.",
+  "User already registered": "Ya existe una cuenta con ese email. Inicia sesión.",
+  "Email not confirmed": "Confirma tu cuenta desde el enlace que te enviamos por email antes de entrar.",
+};
 function AuthModal({ tab, rolPre, onClose, onAuth, onCambiarTab }) {
   const esRegistro = tab === "registro";
   const [nombre, setNombre] = useState("");
@@ -452,14 +491,52 @@ function AuthModal({ tab, rolPre, onClose, onAuth, onCambiarTab }) {
   const [tel, setTel] = useState("");
   const [pass, setPass] = useState("");
   const [rol, setRol] = useState(rolPre || "ambas");
-  const enviar = () => esRegistro
-    ? onAuth({ nombre: nombre.trim() || "Nuevo usuario", email: email.trim() || "usuario@correo.com", telefono: tel.trim(), rol })
-    : onAuth({ nombre: "Lucía Castro", email: email.trim() || "lucia@correo.com", telefono: "", rol: "ambas" });
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+  const [revisaCorreo, setRevisaCorreo] = useState(false);
+
+  const enviar = async () => {
+    setError("");
+    if (!email.trim() || !pass) { setError("Rellena email y contraseña."); return; }
+    if (pass.length < 6) { setError("La contraseña debe tener al menos 6 caracteres."); return; }
+    setCargando(true);
+    if (esRegistro) {
+      const { data, error: err } = await supabase.auth.signUp({
+        email: email.trim(),
+        password: pass,
+        options: { data: { nombre: nombre.trim() || "Nuevo usuario", telefono: tel.trim(), rol } },
+      });
+      setCargando(false);
+      if (err) { setError(ERRORES_AUTH[err.message] || err.message); return; }
+      if (!data.session) { setRevisaCorreo(true); return; }
+      onAuth();
+    } else {
+      const { error: err } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pass });
+      setCargando(false);
+      if (err) { setError(ERRORES_AUTH[err.message] || err.message); return; }
+      onAuth();
+    }
+  };
+
+  if (revisaCorreo) return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <button className="modal-x" onClick={onClose}><X size={20} /></button>
+        <div className="ok centro sin-borde">
+          <div className="ok-icon"><Mail size={26} strokeWidth={2.4} /></div>
+          <h3 className="serif">Revisa tu correo</h3>
+          <p>Te hemos enviado un enlace a <strong>{email}</strong> para confirmar tu cuenta. Ábrelo y vuelve a entrar aquí.</p>
+          <button className="btn-primario ancho" onClick={onClose}>Entendido</button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <button className="modal-x" onClick={onClose}><X size={20} /></button>
-        <div className="modal-marca"><LogoMarea size={30} /><span className="serif wordmark">Marea</span></div>
+        <div className="modal-marca"><LogoYachtToday size={30} /><span className="serif wordmark">Yacht Today</span></div>
         <h2 className="serif modal-tit">{esRegistro ? "Crea tu cuenta" : "Bienvenido de nuevo"}</h2>
         <p className="modal-sub">{esRegistro ? "Una cuenta para alquilar, vivir experiencias y publicar lo tuyo." : "Entra para reservar y gestionar tu cuenta."}</p>
         <div className="toggle"><button className={!esRegistro ? "on" : ""} onClick={() => onCambiarTab("entrar")}>Iniciar sesión</button><button className={esRegistro ? "on" : ""} onClick={() => onCambiarTab("registro")}>Crear cuenta</button></div>
@@ -468,9 +545,9 @@ function AuthModal({ tab, rolPre, onClose, onAuth, onCambiarTab }) {
         {esRegistro && <Ico label="Teléfono" icon={Phone}><input value={tel} onChange={(e) => setTel(e.target.value)} placeholder="600 000 000" /></Ico>}
         <Ico label="Contraseña" icon={Lock}><input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••••" /></Ico>
         {esRegistro && (<div className="rol-bloque"><span className="rol-label">¿Qué quieres hacer?</span><div className="rol-chips">{ROLES.map((r) => <button key={r.v} className={rol === r.v ? "rc on" : "rc"} onClick={() => setRol(r.v)}>{r.t}</button>)}</div></div>)}
-        <button className="btn-primario ancho" onClick={enviar}>{esRegistro ? "Crear cuenta" : "Entrar"}</button>
+        {error && <p className="auth-error">{error}</p>}
+        <button className="btn-primario ancho" disabled={cargando} onClick={enviar}>{cargando ? "Un momento…" : esRegistro ? "Crear cuenta" : "Entrar"}</button>
         <p className="modal-alt">{esRegistro ? "¿Ya tienes cuenta? " : "¿Aún no tienes cuenta? "}<button onClick={() => onCambiarTab(esRegistro ? "entrar" : "registro")}>{esRegistro ? "Inicia sesión" : "Créala aquí"}</button></p>
-        <p className="nota"><Info size={12} /> Maqueta: no se guardan datos reales.</p>
       </div>
     </div>
   );
@@ -523,6 +600,24 @@ function CancelarModal({ reserva, onClose, onConfirmar }) {
         </div>
         <button className="btn-primario ancho" onClick={onClose}>Volver, no cancelar</button>
         <button className="btn-cancelar ancho" onClick={onConfirmar}>{exento ? "Sí, cancelar (sin penalización)" : "Sí, cancelar de todas formas"}</button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Modal eliminar anuncio ───────────────────────────────────────── */
+function EliminarAnuncioModal({ anuncio, error, onClose, onConfirmar }) {
+  const [borrando, setBorrando] = useState(false);
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <button className="modal-x" onClick={onClose}><X size={20} /></button>
+        <div className="aviso-icon"><Trash2 size={26} /></div>
+        <h2 className="serif modal-tit">¿Eliminar "{anuncio.nombre}"?</h2>
+        <p className="aviso-fuerte">Esta acción no se puede deshacer. También se eliminarán las reservas asociadas a este anuncio.</p>
+        {error && <p className="auth-error">{error}</p>}
+        <button className="btn-primario ancho" onClick={onClose}>Volver, no eliminar</button>
+        <button className="btn-cancelar ancho" disabled={borrando} onClick={async () => { setBorrando(true); await onConfirmar(); setBorrando(false); }}>{borrando ? "Eliminando…" : "Sí, eliminar definitivamente"}</button>
       </div>
     </div>
   );
@@ -635,6 +730,35 @@ const OWNER_NIVELES = [
   { min: 20, premio: "A elegir: revisión mecánica, descuento en taller o antifouling subvencionado." },
   { min: 40, premio: "A elegir: electrónica náutica, chalecos homologados, defensas, cabos, batería o hélice." },
 ];
+const FAQ = [
+  { cat: "Reservar", preguntas: [
+    { p: "¿Necesito titulación para alquilar un barco?", r: "Depende del anuncio: cada ficha indica si el patrón está incluido, es opcional o no hace falta. Los veleros y barcos de mayor eslora suelen incluir patrón titulado; motos de agua y neumáticas pequeñas se navegan con licencia de navegación." },
+    { p: "¿Qué incluye el precio?", r: "La tarifa del propietario más los gastos de servicio (15%), ya desglosados antes de pagar. No hay costes ocultos." },
+    { p: "¿Cómo reservo con patrón?", r: "Si el barco lo permite, en la ficha eliges «con patrón» y su coste por hora se añade al precio final antes de confirmar." },
+    { p: "¿Con cuánta antelación tengo que reservar?", r: "Al menos 3 horas antes del inicio (24 h para experiencias), y si reservas entre las 22:00 y las 8:00, el inicio debe ser como muy pronto pasado mañana. Es para dar tiempo al propietario a preparar la salida. Algunos anuncios pueden pedir más antelación; lo verás junto al selector de fecha." },
+  ]},
+  { cat: "Pagos y cancelaciones", preguntas: [
+    { p: "¿Cuándo se me cobra?", r: "Al confirmar la reserva, por la tarifa del propietario más el 15% de gastos de servicio. El propietario recibe su tarifa íntegra." },
+    { p: "¿Puedo cancelar gratis?", r: "Sí, hasta 48 horas antes del inicio. Consulta la política completa en la pestaña Cancelaciones." },
+  ]},
+  { cat: "Publicar tu barco", preguntas: [
+    { p: "¿Cuánto cuesta publicar?", r: "Publicar es gratis. Solo se paga al alquilar, y los gastos de servicio los paga quien reserva: tú recibes tu tarifa íntegra." },
+    { p: "¿Qué documentación necesito?", r: "Matrícula, lista (6ª o 7ª) y póliza de seguro en vigor con su fecha de caducidad. La verificamos automáticamente al publicar, y un revisor de Yacht Today da el visto bueno final." },
+  ]},
+  { cat: "Seguridad y documentación", preguntas: [
+    { p: "¿Están verificados los propietarios?", r: "Sí: revisamos matrícula, lista y seguro antes de publicar cualquier anuncio, y distinguimos con «Propietario Premium» a quienes mantienen mejor valoración y disponibilidad." },
+    { p: "¿Qué pasa con mis datos?", r: "Tratamos tu documentación exclusivamente para verificar la reserva o el anuncio, conforme al RGPD. No se cede a terceros salvo obligación legal, y puedes pedir su supresión escribiendo a soporte@yachtoday.com." },
+  ]},
+  { cat: "Programa de recompensas", preguntas: [
+    { p: "¿Cómo subo de nivel?", r: "Cada alquiler cuenta: con 5 reservas pasas a Captain, con 10 a Navigator y con 20 a Admiral, desbloqueando descuentos y ventajas exclusivas." },
+    { p: "¿Qué es la Recompensa Compartida?", r: "Cuando un propietario llega a 25 o 50 alquileres, premiamos también a todos los clientes que alquilaron ese barco en el periodo: cupones o la posibilidad de un alquiler gratis." },
+  ]},
+];
+const CANCELACION_TRAMOS = [
+  { cuando: "Más de 48 h antes", reembolso: "100%", nota: "Cancelación gratuita, sin preguntas." },
+  { cuando: "Entre 48 h y 24 h antes", reembolso: "50%", nota: "Se retiene la mitad para compensar al propietario." },
+  { cuando: "Menos de 24 h antes o no presentado", reembolso: "0%", nota: "Sin reembolso, salvo causa de fuerza mayor." },
+];
 function nivelDe(count) {
   let idx = 0;
   NIVELES.forEach((n, i) => { if (count >= n.min) idx = i; });
@@ -650,7 +774,7 @@ function estadoFidelidad(count) {
 }
 
 /* ── Panel de usuario ────────────────────────────────────────────── */
-function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onCancelar, onFinalizar, onFinalizarRecibida, onSimularVistoBueno, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora }) {
+function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onConectarStripe, errorCobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onSimularVistoBueno, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEliminarAnuncio }) {
   const esCliente = usuario.rol === "cliente" || usuario.rol === "ambas";
   const esProp = usuario.rol === "propietario" || usuario.rol === "ambas";
   const activas = reservas.filter((r) => r.estado !== "finalizada").slice().sort((a, b) => new Date(a.inicioISO) - new Date(b.inicioISO));
@@ -677,6 +801,24 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
 
       <main className="panel-main">
         <div className="panel-cab"><h1 className="serif">{saludo()}, {usuario.nombre.split(" ")[0]} 👋</h1><button className="btn-primario auto" onClick={onExplorar}><Plus size={16} /> Nueva reserva</button></div>
+
+        {esAdmin && (
+          <section className="panel-sec">
+            <h2 className="serif sec-t"><ShieldCheck size={18} /> Anuncios pendientes de revisión</h2>
+            {anunciosRevision.length ? (<ul className="lista">{anunciosRevision.map((a) => (
+              <li key={a.id} className="lista-item lista-item-col">
+                <div className="li-fila">
+                  <div><p className="li-nombre">{a.nombre}</p><p className="li-sub">{a.clase} · {a.puerto}</p></div>
+                  <div className="li-acciones">
+                    <button className="btn-sec sm" onClick={() => onRechazarAnuncio(a)}>Rechazar</button>
+                    <button className="btn-primario sm" onClick={() => onAprobarAnuncio(a)}>Aprobar</button>
+                  </div>
+                </div>
+              </li>
+            ))}</ul>)
+              : <p className="mini-nota">No hay anuncios esperando revisión.</p>}
+          </section>
+        )}
 
         {esCliente && (
           <section className="panel-sec">
@@ -732,6 +874,26 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
         )}
 
         {esProp && (
+          <section className="panel-sec">
+            <h2 className="serif sec-t"><ShieldCheck size={18} /> Cobros</h2>
+            {usuario.stripeAccountId
+              ? (<><p className="mini-nota">✓ Cuenta de cobro conectada con Stripe.</p><button className="btn-sec sm" onClick={onConectarStripe}>Revisar datos de cobro</button></>)
+              : (<><p className="mini-nota">Para recibir el dinero de tus alquileres, conecta una cuenta de cobro con Stripe (tarda unos minutos).</p><button className="btn-primario sm" onClick={onConectarStripe}>Activar cobros</button></>)}
+            {errorCobros && <p className="mini-nota mini-nota-error">{errorCobros}</p>}
+          </section>
+        )}
+
+        {esProp && (
+          <section className="panel-sec">
+            <div className="premium" style={{ flexWrap: "wrap" }}>
+              <Wrench size={22} />
+              <div style={{ flex: 1 }}><b>¿Tu barco necesita mantenimiento?</b><p>Spen Mechanics S.L. se encarga de revisiones, motor y puesta a punto — para que siempre lo tengas listo para tu próxima reserva.</p></div>
+              <button className="btn-sec sm" style={{ marginLeft: "auto" }} onClick={onMantenimiento}>Ver Spen Mechanics S.L.</button>
+            </div>
+          </section>
+        )}
+
+        {esProp && (
           <section className="panel-sec"><h2 className="serif sec-t"><Ship size={18} /> Mis anuncios</h2>
             {avisosPropietario > 0
               ? <p className="mini-nota mini-nota-error">⚠ {avisosPropietario} aviso{avisosPropietario > 1 ? "s" : ""} por cancelar sin motivo justificado. Reduce tu visibilidad en búsquedas y te aleja del distintivo Propietario Premium.</p>
@@ -745,8 +907,11 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
               return (
                 <li key={b.id} className="lista-item lista-item-col">
                   <div className="li-fila">
-                    <div><p className="li-nombre">{b.nombre}</p><p className="li-sub">{b.tipo} · {eur(b.dia)}/{b.unidad || "día"}</p></div>
-                    <span className="estado revision">{b.estado}</span>
+                    <div><p className="li-nombre">{b.nombre}</p><p className="li-sub">{etiqueta(b)} · {eur(precioBase(b))}/{unidad(b)}</p></div>
+                    <div className="li-acciones">
+                      <span className="estado revision">{b.estado}</span>
+                      <button className="acc" title="Eliminar anuncio" onClick={() => onEliminarAnuncio(b)}><Trash2 size={14} /></button>
+                    </div>
                   </div>
                   <p className="mini-nota">{completadasBarco} alquiler{completadasBarco === 1 ? "" : "es"} completados{siguienteBarco ? ` · faltan ${siguienteBarco.min - completadasBarco} para el siguiente premio` : " · ¡nivel máximo!"}</p>
                   {desbloqueado && (
@@ -815,13 +980,13 @@ function UltimaHoraAlerta({ barco, onActivar }) {
 }
 
 /* ── Ventajas (programa de recompensas) ──────────────────────────── */
-function Ventajas({ onExplorar, onPublicar }) {
+function Ventajas({ onExplorar, onPublicar, onMantenimiento }) {
   return (
     <div className="ventajas">
       <section className="v-hero" style={{ backgroundImage: `linear-gradient(120deg, rgba(15,39,50,.9) 0%, rgba(15,39,50,.72) 45%, rgba(18,48,61,.55) 100%), url(${VENTAJAS_FOTO})` }}>
         <span className="eyebrow claro">Programa de recompensas</span>
         <h1 className="serif v-h1">Cuanto más navegas, más ganas</h1>
-        <p className="v-sub">Y cuanto más alquilas tu barco, menos cuesta mantenerlo. Marea no es solo un marketplace: es una comunidad que premia a quien alquila y a quien comparte su embarcación.</p>
+        <p className="v-sub">Y cuanto más alquilas tu barco, menos cuesta mantenerlo. Yacht Today no es solo un marketplace: es una comunidad que premia a quien alquila y a quien comparte su embarcación.</p>
         <div className="v-hero-btns"><button className="btn-primario auto claro-btn" onClick={onExplorar}>Explorar</button><button className="btn-sec-claro" onClick={onPublicar}>Publica lo tuyo</button></div>
       </section>
 
@@ -843,12 +1008,17 @@ function Ventajas({ onExplorar, onPublicar }) {
           {OWNER_NIVELES.map((o, i) => (<div key={o.min} className="owner-card"><span className="owner-n">Nivel {i + 1}</span><span className="owner-req">{o.min} alquileres</span><p>{o.premio}</p></div>))}
         </div>
         <div className="premium"><BadgeCheck size={22} /><div><b>Distintivo ⭐ Propietario Premium</b><p>Excelente valoración, alta disponibilidad, respuesta rápida y sin cancelaciones: más visibilidad, más confianza y prioridad en las búsquedas.</p></div></div>
+        <div className="premium" style={{ flexWrap: "wrap" }}>
+          <Wrench size={22} />
+          <div style={{ flex: 1 }}><b>Mantenimiento con Spen Mechanics S.L.</b><p>Revisiones, motor y puesta a punto para que tu barco esté siempre listo — con la garantía de nuestro taller de confianza.</p></div>
+          <button className="btn-sec sm" style={{ marginLeft: "auto" }} onClick={onMantenimiento}>Ver Spen Mechanics S.L.</button>
+        </div>
       </section>
 
       <section className="seccion recompensa-compartida">
         <span className="eyebrow claro">La idea estrella</span>
         <h2 className="serif">Recompensa Compartida</h2>
-        <p>Cuando un propietario alcanza un hito (25 o 50 alquileres), Marea premia <b>al propietario y a todos los clientes</b> que alquilaron ese barco en ese periodo. El dueño recibe un vale de mantenimiento; los clientes, un cupón o entran en el sorteo de un alquiler gratis. Todos sienten que forman parte del éxito.</p>
+        <p>Cuando un propietario alcanza un hito (25 o 50 alquileres), Yacht Today premia <b>al propietario y a todos los clientes</b> que alquilaron ese barco en ese periodo. El dueño recibe un vale de mantenimiento; los clientes, un cupón o entran en el sorteo de un alquiler gratis. Todos sienten que forman parte del éxito.</p>
       </section>
 
       <section className="seccion">
@@ -863,21 +1033,215 @@ function Ventajas({ onExplorar, onPublicar }) {
   );
 }
 
+/* ── Spen Mechanics S.L.: publicidad del mantenimiento náutico de Eric ───
+   Contenido de borrador — pendiente de que Eric confirme los servicios
+   exactos, el tono y el contacto real antes de darlo por definitivo. */
+const SPEN_MECHANICS_URL = "https://www.spenmechanics.com";
+
+function SpenMechanics() {
+  return (
+    <div className="ventajas">
+      <section className="v-hero" style={{ backgroundImage: `linear-gradient(120deg, rgba(15,39,50,.9) 0%, rgba(15,39,50,.72) 45%, rgba(18,48,61,.55) 100%), url(${MARINA_FOTO})` }}>
+        <span className="eyebrow claro">Mantenimiento náutico</span>
+        <h1 className="serif v-h1">Spen Mechanics S.L.</h1>
+        <p className="v-sub">Cuidamos tu embarcación como si fuera nuestra. Revisiones, mantenimiento de motor y puesta a punto, con materiales de calidad y trato cercano.</p>
+        <div className="v-hero-btns">
+          <a className="btn-primario auto claro-btn" href={SPEN_MECHANICS_URL} target="_blank" rel="noopener noreferrer">Pide presupuesto</a>
+          <a className="btn-sec-claro" href={SPEN_MECHANICS_URL} target="_blank" rel="noopener noreferrer">www.spenmechanics.com</a>
+        </div>
+      </section>
+
+      <section className="seccion">
+        <div className="sec-head"><h2 className="serif">Qué ofrecemos</h2></div>
+        <div className="fidelidad">
+          <div className="fid"><Wrench size={20} /><div><b>Revisiones periódicas</b><p>Puesta a punto de motor, casco y equipos antes de cada temporada, para que tu barco esté siempre listo para zarpar.</p></div></div>
+          <div className="fid"><ShieldCheck size={20} /><div><b>Gestión de averías</b><p>Diagnóstico y reparación con repuestos de calidad, avisándote siempre antes de actuar y con presupuesto claro.</p></div></div>
+          <div className="fid"><Sparkles size={20} /><div><b>Limpieza y abrillantado</b><p>Casco, cubierta e interior a punto, dentro y fuera del agua.</p></div></div>
+        </div>
+      </section>
+
+      <section className="seccion">
+        <div className="sec-head"><h2 className="serif">Por qué elegirnos</h2></div>
+        <div className="ref-grid">
+          <div className="ref"><BadgeCheck size={20} /><b>Técnicos con experiencia</b><p>Años cuidando embarcaciones de todo tipo, con la misma atención al detalle en cada trabajo.</p></div>
+          <div className="ref"><Check size={20} /><b>Presupuesto claro</b><p>Sabrás el coste antes de que toquemos el barco. Sin sorpresas en la factura final.</p></div>
+          <div className="ref"><Handshake size={20} /><b>Trato cercano</b><p>Te explicamos qué le pasa a tu barco y por qué, no solo lo arreglamos.</p></div>
+        </div>
+      </section>
+
+      <section className="seccion">
+        <div className="cancel-cta">
+          <p>¿Quieres que le echemos un ojo a tu embarcación?</p>
+          <a className="btn-primario auto" href={SPEN_MECHANICS_URL} target="_blank" rel="noopener noreferrer">Visitar spenmechanics.com</a>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/* ── Ayuda: contacto, FAQ, cancelaciones ────────────────────────────── */
+function Ayuda({ seccion, onCambiar, usuario, onIrPanel, onAbrirAuth }) {
+  return (
+    <div className="ventajas ayuda">
+      <section className="v-hero" style={{ backgroundImage: `linear-gradient(120deg, rgba(15,39,50,.92) 0%, rgba(15,39,50,.75) 55%, rgba(18,48,61,.55) 100%), url(${MARINA_FOTO})` }}>
+        <span className="eyebrow claro">Ayuda</span>
+        <h1 className="serif v-h1">Estamos para ayudarte</h1>
+        <p className="v-sub">Escríbenos, resuelve tus dudas o consulta cómo funcionan las cancelaciones.</p>
+      </section>
+
+      <div className="ayuda-tabs">
+        <button className={seccion === "contacto" ? "at on" : "at"} onClick={() => onCambiar("contacto")}><MessageCircle size={16} /> Contacto</button>
+        <button className={seccion === "faq" ? "at on" : "at"} onClick={() => onCambiar("faq")}><HelpCircle size={16} /> Preguntas frecuentes</button>
+        <button className={seccion === "cancelaciones" ? "at on" : "at"} onClick={() => onCambiar("cancelaciones")}><RotateCcw size={16} /> Cancelaciones</button>
+      </div>
+
+      {seccion === "contacto" && <AyudaContacto onVerFAQ={() => onCambiar("faq")} />}
+      {seccion === "faq" && <AyudaFAQ />}
+      {seccion === "cancelaciones" && <AyudaCancelaciones usuario={usuario} onIrPanel={onIrPanel} onAbrirAuth={onAbrirAuth} />}
+    </div>
+  );
+}
+
+function AyudaContacto({ onVerFAQ }) {
+  const [nombre, setNombre] = useState("");
+  const [email, setEmail] = useState("");
+  const [asunto, setAsunto] = useState("Reserva");
+  const [mensaje, setMensaje] = useState("");
+  const [enviado, setEnviado] = useState(false);
+  const falta = !nombre.trim() || !email.trim() || !mensaje.trim();
+
+  if (enviado) return (
+    <section className="seccion">
+      <div className="ok centro">
+        <div className="ok-icon"><Check size={28} strokeWidth={3} /></div>
+        <h3 className="serif">¡Mensaje enviado!</h3>
+        <p>Gracias, {nombre.trim().split(" ")[0]}. Te responderemos a {email} en menos de 24 h laborables.</p>
+      </div>
+    </section>
+  );
+
+  return (
+    <section className="seccion ayuda-contacto">
+      <div className="contacto-grid">
+        <div className="contacto-info">
+          <div className="fid"><Mail size={20} /><div><b>Escríbenos</b><p><a className="link-inline" href="mailto:soporte@yachtoday.com">soporte@yachtoday.com</a></p></div></div>
+          <div className="fid"><Clock size={20} /><div><b>Horario</b><p>Lunes a viernes, 9:00–19:00. Respondemos en menos de 24 h laborables.</p></div></div>
+          <div className="fid"><HelpCircle size={20} /><div><b>¿Duda rápida?</b><p>Consulta antes las <button type="button" className="link-inline" onClick={onVerFAQ}>preguntas frecuentes</button>, puede que ya tengan la respuesta.</p></div></div>
+        </div>
+        <form className="form contacto-form" onSubmit={(e) => { e.preventDefault(); if (!falta) setEnviado(true); }}>
+          <Fila>
+            <label className="field"><span>Nombre</span><input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Tu nombre" /></label>
+            <label className="field"><span>Email</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tu@email.com" /></label>
+          </Fila>
+          <label className="field"><span>Asunto</span><select value={asunto} onChange={(e) => setAsunto(e.target.value)}>{["Reserva", "Publicar mi barco", "Pagos y facturación", "Cancelación", "Otro"].map((o) => <option key={o}>{o}</option>)}</select></label>
+          <label className="field"><span>Mensaje</span><textarea rows={5} value={mensaje} onChange={(e) => setMensaje(e.target.value)} placeholder="Cuéntanos en qué podemos ayudarte" /></label>
+          <button className="btn-primario ancho" disabled={falta}>Enviar mensaje</button>
+        </form>
+      </div>
+    </section>
+  );
+}
+
+function AyudaFAQ() {
+  const [abierta, setAbierta] = useState("Reservar-0");
+  return (
+    <section className="seccion ayuda-faq">
+      {FAQ.map((grupo) => (
+        <div key={grupo.cat} className="faq-grupo">
+          <h3 className="serif faq-cat">{grupo.cat}</h3>
+          <div className="faq-lista">
+            {grupo.preguntas.map((qa, i) => {
+              const key = `${grupo.cat}-${i}`;
+              const abierto = abierta === key;
+              return (
+                <div key={key} className={`faq-item ${abierto ? "on" : ""}`}>
+                  <button type="button" className="faq-p" onClick={() => setAbierta(abierto ? null : key)}>
+                    <span>{qa.p}</span><ChevronDown size={18} className="faq-chevron" />
+                  </button>
+                  {abierto && <p className="faq-r">{qa.r}</p>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function AyudaCancelaciones({ usuario, onIrPanel, onAbrirAuth }) {
+  return (
+    <section className="seccion ayuda-cancel">
+      <div className="sec-head"><h2 className="serif">Cómo funcionan las cancelaciones</h2></div>
+      <p className="cancel-intro">La misma política aplica a barcos, experiencias y material náutico. El reembolso se calcula sobre el importe total pagado (tarifa del propietario + gastos de servicio).</p>
+      <div className="cancel-tabla">
+        {CANCELACION_TRAMOS.map((t) => (
+          <div key={t.cuando} className="cancel-fila">
+            <span className="cancel-cuando">{t.cuando}</span>
+            <span className="cancel-reembolso">{t.reembolso}</span>
+            <span className="cancel-nota">{t.nota}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="fidelidad">
+        <div className="fid"><ShieldCheck size={20} /><div><b>Si cancela el propietario</b><p>Reembolso del 100% siempre, sea cual sea la antelación. Si ocurre a menos de 48 h de la salida, te ayudamos a buscar una alternativa similar.</p></div></div>
+        <div className="fid"><CloudRain size={20} /><div><b>Mal tiempo o alerta marítima</b><p>Si Puertos del Estado o Capitanía Marítima desaconsejan la salida, la reserva se reembolsa al 100% o se reprograma sin coste.</p></div></div>
+        <div className="fid"><RotateCcw size={20} /><div><b>El reembolso tarda</b><p>De 3 a 5 días laborables en llegar a tu método de pago original.</p></div></div>
+        <div className="fid"><Clock size={20} /><div><b>Antelación mínima</b><p>Toda reserva exige un mínimo de antelación (3 h para barcos y material, 24 h para experiencias, o el mínimo que fije el propietario) y nunca puede empezar antes de pasado mañana si se reserva de madrugada o de noche (22:00–8:00). Así el propietario siempre tiene tiempo de prepararse.</p></div></div>
+      </div>
+
+      <div className="cancel-cta">
+        <p>¿Tienes una reserva próxima? Gestiona su cancelación desde tu panel.</p>
+        <button className="btn-primario auto" onClick={usuario ? onIrPanel : () => onAbrirAuth("entrar")}>{usuario ? "Ir a mis reservas" : "Entrar para ver mis reservas"}</button>
+      </div>
+    </section>
+  );
+}
+
 /* ── Publicar ────────────────────────────────────────────────────── */
-function Publicar({ onDone, onPublicado }) {
+const PATRON_OPTS = [["No, sin patrón", "no"], ["Opcional", "opcional"], ["Siempre con patrón", "incluido"]];
+function Publicar({ usuario, onDone, onPublicado }) {
   const [clase, setClase] = useState("barco");
   const [nombre, setNombre] = useState("");
   const [tipo, setTipo] = useState(TIPOS[0]);
   const [act, setAct] = useState(ACTIVIDADES[0]);
   const [matTipo, setMatTipo] = useState(MATERIALES[0]);
   const [zonaPub, setZonaPub] = useState(ZONAS[1]);
+  const [puerto, setPuerto] = useState("");
+  const [plazas, setPlazas] = useState("");
+  const [duracion, setDuracion] = useState("");
+  const [eslora, setEslora] = useState("");
+  const [potencia, setPotencia] = useState("");
+  const [lista, setLista] = useState("7ª");
+  const [patron, setPatron] = useState("opcional");
+  const [horaPrecio, setHoraPrecio] = useState("");
   const [precio, setPrecio] = useState(350);
+  const [descripcion, setDescripcion] = useState("");
+  const [fotos, setFotos] = useState([]);
+  const fotosInputRef = useRef(null);
   const [matricula, setMatricula] = useState("");
   const [poliza, setPoliza] = useState("");
   const [caducidadSeguro, setCaducidadSeguro] = useState("");
+  const [avisoHoras, setAvisoHoras] = useState("");
+  const [equipoSel, setEquipoSel] = useState([]);
+  const [equipoCustom, setEquipoCustom] = useState([]);
+  const [equipoNuevo, setEquipoNuevo] = useState("");
   const [consiento, setConsiento] = useState(false);
   const [enviado, setEnviado] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [errorPublicar, setErrorPublicar] = useState("");
   const { estado: verificacion, iniciar: iniciarVerificacion } = useVerificacionAutomatica();
+  const previews = useMemo(() => fotos.map((f) => URL.createObjectURL(f)), [fotos]);
+  useEffect(() => () => previews.forEach((u) => URL.revokeObjectURL(u)), [previews]);
+  const agregarFotos = (e) => { setFotos((p) => [...p, ...Array.from(e.target.files || [])].slice(0, 6)); e.target.value = ""; };
+  const quitarFoto = (i) => setFotos((p) => p.filter((_, idx) => idx !== i));
+  useEffect(() => setEquipoSel([]), [clase]);
+  const agregarEquipoCustom = () => {
+    const v = equipoNuevo.trim();
+    if (v && !equipoCustom.includes(v)) setEquipoCustom((p) => [...p, v]);
+    setEquipoNuevo("");
+  };
   const esExp = clase === "experiencia", esMat = clase === "material";
   const uni = esExp ? "persona" : "día";
   const clientePaga = Math.round(precio * (1 + COMISION));
@@ -886,17 +1250,36 @@ function Publicar({ onDone, onPublicado }) {
 
   const publicar = () => {
     if (faltaDocumentacion) return;
-    iniciarVerificacion(() => {
-      onPublicado({
-        id: Date.now(), nombre: nombre.trim() || (esExp ? "Tu experiencia" : esMat ? "Tu material" : "Tu barco"),
-        tipo: esExp ? act : esMat ? matTipo : tipo, dia: precio, unidad: uni, zona: zonaPub,
-        matricula: matricula.trim(), poliza: poliza.trim(), caducidadSeguro, estado: "En revisión",
-      });
-      setEnviado(true);
+    iniciarVerificacion(async () => {
+      setEnviando(true);
+      setErrorPublicar("");
+      try {
+        const urlsFotos = fotos.length ? await subirFotos(usuario.id, fotos) : [];
+        const base = {
+          clase, propietario_id: usuario.id,
+          nombre: nombre.trim() || (esExp ? "Tu experiencia" : esMat ? "Tu material" : "Tu barco"),
+          puerto: puerto.trim(), zona: zonaPub, descripcion: descripcion.trim(), fotos: urlsFotos,
+          poliza: poliza.trim(), caducidad_seguro: caducidadSeguro, estado: "En revisión",
+          aviso_minimo_horas: +avisoHoras > 0 ? +avisoHoras : null,
+          equipamiento: [...equipoSel, ...equipoCustom],
+        };
+        const payload = esExp
+          ? { ...base, actividad: act, plazas: +plazas || null, duracion: duracion.trim(), persona: precio, anfitrion: usuario.nombre }
+          : esMat
+            ? { ...base, tipo: matTipo, hora: +horaPrecio || null, dia: precio }
+            : { ...base, tipo, eslora: +eslora || null, plazas: +plazas || null, potencia: +potencia || null, lista, patron, hora: +horaPrecio || null, dia: precio, matricula: matricula.trim() };
+        const creado = await crearAnuncio(payload);
+        onPublicado(creado);
+        setEnviado(true);
+      } catch (err) {
+        setErrorPublicar(err.message || "No se ha podido publicar. Inténtalo de nuevo.");
+      } finally {
+        setEnviando(false);
+      }
     });
   };
 
-  if (enviado) return (<div className="publicar"><div className="ok centro"><div className="ok-icon"><Check size={28} strokeWidth={3} /></div><h3 className="serif">¡Recibido!</h3><p>Documentación verificada automáticamente. Un revisor de Marea le dará el visto bueno final antes de publicarlo. Lo tienes en <strong>Mis anuncios</strong>.</p><button className="btn-primario ancho" onClick={onDone}>Ir a mi panel</button></div></div>);
+  if (enviado) return (<div className="publicar"><div className="ok centro"><div className="ok-icon"><Check size={28} strokeWidth={3} /></div><h3 className="serif">¡Recibido!</h3><p>Documentación verificada automáticamente. Un revisor de Yacht Today le dará el visto bueno final antes de publicarlo. Lo tienes en <strong>Mis anuncios</strong>.</p><button className="btn-primario ancho" onClick={onDone}>Ir a mi panel</button></div></div>);
 
   return (
     <div className="publicar">
@@ -913,27 +1296,68 @@ function Publicar({ onDone, onPublicado }) {
           {esExp ? (
             <>
               <Fila><label className="field"><span>Título de la experiencia</span><input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Jornada de pesca al curricán" /></label><label className="field"><span>Actividad</span><select value={act} onChange={(e) => setAct(e.target.value)}>{ACTIVIDADES.map((o) => <option key={o}>{o}</option>)}</select></label></Fila>
-              <Fila><Select label="Zona" opts={ZONAS.slice(1)} value={zonaPub} onChange={setZonaPub} /><Field label="Punto de salida" ph="Grao de Castellón" /></Fila>
-              <Fila><Field label="Plazas" ph="5" /><Field label="Duración" ph="4 h" /></Fila>
+              <Fila><Select label="Zona" opts={ZONAS.slice(1)} value={zonaPub} onChange={setZonaPub} /><label className="field"><span>Punto de salida</span><input value={puerto} onChange={(e) => setPuerto(e.target.value)} placeholder="Grao de Castellón" /></label></Fila>
+              <Fila><label className="field"><span>Plazas</span><input type="number" value={plazas} onChange={(e) => setPlazas(e.target.value)} placeholder="5" /></label><label className="field"><span>Duración</span><input value={duracion} onChange={(e) => setDuracion(e.target.value)} placeholder="4 h" /></label></Fila>
               <label className="field"><span>Precio / persona (€)</span><input type="number" value={precio} onChange={(e) => setPrecio(+e.target.value || 0)} /></label>
             </>
           ) : esMat ? (
             <>
               <Fila><label className="field"><span>Nombre</span><input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Tabla SUP hinchable 10'6&quot;" /></label><label className="field"><span>Tipo</span><select value={matTipo} onChange={(e) => setMatTipo(e.target.value)}>{MATERIALES.map((o) => <option key={o}>{o}</option>)}</select></label></Fila>
-              <Fila><Select label="Zona" opts={ZONAS.slice(1)} value={zonaPub} onChange={setZonaPub} /><Field label="Entrega / playa" ph="Peñíscola" /></Fila>
-              <Fila><Field label="Precio / hora (€)" ph="12" /><label className="field"><span>Precio / día (€)</span><input type="number" value={precio} onChange={(e) => setPrecio(+e.target.value || 0)} /></label></Fila>
+              <Fila><Select label="Zona" opts={ZONAS.slice(1)} value={zonaPub} onChange={setZonaPub} /><label className="field"><span>Entrega / playa</span><input value={puerto} onChange={(e) => setPuerto(e.target.value)} placeholder="Peñíscola" /></label></Fila>
+              <Fila><label className="field"><span>Precio / hora (€)</span><input type="number" value={horaPrecio} onChange={(e) => setHoraPrecio(e.target.value)} placeholder="12" /></label><label className="field"><span>Precio / día (€)</span><input type="number" value={precio} onChange={(e) => setPrecio(+e.target.value || 0)} /></label></Fila>
             </>
           ) : (
             <>
               <Fila><label className="field"><span>Nombre del barco</span><input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Lagoon 42 Catamarán" /></label><label className="field"><span>Tipo</span><select value={tipo} onChange={(e) => setTipo(e.target.value)}>{TIPOS.map((o) => <option key={o}>{o}</option>)}</select></label></Fila>
-              <Fila><Select label="Zona" opts={ZONAS.slice(1)} value={zonaPub} onChange={setZonaPub} /><Field label="Puerto base" ph="Puerto de Mahón, Menorca" /></Fila>
-              <Fila><Field label="Eslora (m)" ph="12.6" /><Field label="Plazas" ph="10" /></Fila>
-              <Fila><Select label="Lista (matrícula)" opts={["6ª", "7ª"]} /><Select label="¿Ofreces patrón?" opts={["No, sin patrón", "Opcional", "Siempre con patrón"]} /></Fila>
-              <Fila><Field label="Precio / hora (€)" ph="180" /><label className="field"><span>Precio / día (€)</span><input type="number" value={precio} onChange={(e) => setPrecio(+e.target.value || 0)} /></label></Fila>
+              <Fila><Select label="Zona" opts={ZONAS.slice(1)} value={zonaPub} onChange={setZonaPub} /><label className="field"><span>Puerto base</span><input value={puerto} onChange={(e) => setPuerto(e.target.value)} placeholder="Puerto de Mahón, Menorca" /></label></Fila>
+              <Fila><label className="field"><span>Eslora (m)</span><input type="number" value={eslora} onChange={(e) => setEslora(e.target.value)} placeholder="12.6" /></label><label className="field"><span>Plazas</span><input type="number" value={plazas} onChange={(e) => setPlazas(e.target.value)} placeholder="10" /></label></Fila>
+              <Fila><label className="field"><span>Potencia (cv)</span><input type="number" value={potencia} onChange={(e) => setPotencia(e.target.value)} placeholder="150" /></label><Select label="Lista (matrícula)" opts={["6ª", "7ª"]} value={lista} onChange={setLista} /></Fila>
+              <label className="field"><span>¿Ofreces patrón?</span><select value={patron} onChange={(e) => setPatron(e.target.value)}>{PATRON_OPTS.map(([t, v]) => <option key={v} value={v}>{t}</option>)}</select></label>
+              <Fila><label className="field"><span>Precio / hora (€)</span><input type="number" value={horaPrecio} onChange={(e) => setHoraPrecio(e.target.value)} placeholder="180" /></label><label className="field"><span>Precio / día (€)</span><input type="number" value={precio} onChange={(e) => setPrecio(+e.target.value || 0)} /></label></Fila>
             </>
           )}
-          <label className="field"><span>Descripción</span><textarea rows={3} placeholder="Cuenta qué lo hace especial…" /></label>
-          <div className="fotos-drop"><Plus size={16} /> Añadir fotos</div>
+          <label className="field"><span>Descripción</span><textarea rows={3} value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Cuenta qué lo hace especial…" /></label>
+          <input ref={fotosInputRef} type="file" accept="image/*" multiple hidden onChange={agregarFotos} />
+          <button type="button" className="fotos-drop" onClick={() => fotosInputRef.current?.click()}><Plus size={16} /> {fotos.length ? "Añadir más fotos" : "Añadir fotos"}</button>
+          {fotos.length > 0 && (
+            <div className="fotos-previews">
+              {previews.map((src, i) => (
+                <div key={src} className="fotos-preview">
+                  <img src={src} alt={`Foto ${i + 1}`} />
+                  <button type="button" className="fotos-preview-x" onClick={() => quitarFoto(i)}><X size={12} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="equipo-pub">
+            <span>Equipamiento y servicios</span>
+            <div className="equipo-check-grid">
+              {EQUIPAMIENTO_TIPICO[clase].map((op) => (
+                <label key={op} className="check">
+                  <input type="checkbox" checked={equipoSel.includes(op)} onChange={(e) => setEquipoSel((p) => e.target.checked ? [...p, op] : p.filter((x) => x !== op))} />
+                  {op}
+                </label>
+              ))}
+            </div>
+            <Fila>
+              <div className="field"><input value={equipoNuevo} onChange={(e) => setEquipoNuevo(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); agregarEquipoCustom(); } }} placeholder="Añade lo tuyo (p. ej. Barbacoa a bordo)" /></div>
+              <button type="button" className="btn-sec sm" onClick={agregarEquipoCustom} style={{ alignSelf: "flex-start" }}>Añadir</button>
+            </Fila>
+            {equipoCustom.length > 0 && (
+              <div className="equipo-chips">
+                {equipoCustom.map((c) => (
+                  <span key={c} className="equipo-chip">{c} <button type="button" onClick={() => setEquipoCustom((p) => p.filter((x) => x !== c))}><X size={12} /></button></span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <label className="field">
+            <span>Antelación mínima para reservar (horas, opcional)</span>
+            <input type="number" min={0} value={avisoHoras} onChange={(e) => setAvisoHoras(e.target.value)} placeholder={esExp ? "24 (por defecto)" : "3 (por defecto)"} />
+          </label>
+          <p className="mini-nota">Déjalo en blanco para usar el mínimo estándar. Da igual lo que pongas: si un cliente reserva entre las 22:00 y las 8:00, nunca podrá empezar antes de pasado mañana — es una norma de seguridad de la plataforma que no se puede desactivar.</p>
 
           <h3 className="serif bloque-tit">Documentación y verificación</h3>
           {!esExp && !esMat && <label className="field"><span>Número de matrícula</span><input value={matricula} onChange={(e) => setMatricula(e.target.value)} placeholder="7ª-CS-1234-56" /></label>}
@@ -944,8 +1368,9 @@ function Publicar({ onDone, onPublicado }) {
           <div className="fotos-drop"><Plus size={16} /> Adjuntar documentación (próximamente)</div>
           <ConsentimientoLegal checked={consiento} onChange={setConsiento} texto="la documentación de este anuncio (matrícula, póliza y certificados)" />
 
-          <button className="btn-primario ancho" onClick={publicar} disabled={faltaDocumentacion || verificacion === "verificando"}>
-            {verificacion === "verificando" ? "Verificando automáticamente…" : "Publicar"}
+          {errorPublicar && <p className="auth-error">{errorPublicar}</p>}
+          <button className="btn-primario ancho" onClick={publicar} disabled={faltaDocumentacion || verificacion === "verificando" || enviando}>
+            {verificacion === "verificando" ? "Verificando automáticamente…" : enviando ? "Publicando…" : "Publicar"}
           </button>
           {faltaDocumentacion && <p className="mini-nota">Completa la documentación y acepta el tratamiento de datos para poder publicar.</p>}
         </div>
@@ -954,14 +1379,13 @@ function Publicar({ onDone, onPublicado }) {
           <div className="gan-linea"><span>El cliente paga</span><span className="precio blanco"><b>{eur(clientePaga)}</b></span></div>
           <div className="gan-detalle"><div><span>Tu tarifa</span><span>{eur(precio)}</span></div><div className="gan-com"><span>Gastos de servicio ({COMISION * 100}%)</span><span>{eur(tuComision)}</span></div></div>
           <div className="gan-total"><span>Tú recibes</span><span className="precio verde"><b>{eur(precio)}</b></span></div>
-          <p className="gan-nota">Los {eur(tuComision)} de servicio son lo que gana Marea, sin tocar tu tarifa.</p>
+          <p className="gan-nota">Los {eur(tuComision)} de servicio son lo que gana Yacht Today, sin tocar tu tarifa.</p>
         </aside>
       </div>
     </div>
   );
 }
 const Fila = ({ children }) => <div className="fila">{children}</div>;
-const Field = ({ label, ph }) => (<label className="field"><span>{label}</span><input placeholder={ph} /></label>);
 const Select = ({ label, opts, value, onChange }) => (<label className="field"><span>{label}</span><select value={value} onChange={onChange ? (e) => onChange(e.target.value) : undefined}>{opts.map((o) => <option key={o}>{o}</option>)}</select></label>);
 
 /* ── Consentimiento de datos (RGPD) ──────────────────────────────── */
@@ -969,7 +1393,7 @@ function ConsentimientoLegal({ checked, onChange, texto }) {
   return (
     <label className="consentimiento">
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      <span>He leído y acepto que Marea trate {texto} exclusivamente para verificar {texto.includes("licencia") ? "esta reserva" : "este anuncio"}, conforme al RGPD (Reglamento UE 2016/679). No se cederán a terceros salvo obligación legal, y puedo pedir su supresión escribiendo a soporte@marea.com.</span>
+      <span>He leído y acepto que Yacht Today trate {texto} exclusivamente para verificar {texto.includes("licencia") ? "esta reserva" : "este anuncio"}, conforme al RGPD (Reglamento UE 2016/679). No se cederán a terceros salvo obligación legal, y puedo pedir su supresión escribiendo a soporte@yachtoday.com.</span>
     </label>
   );
 }
@@ -977,7 +1401,7 @@ function ConsentimientoLegal({ checked, onChange, texto }) {
 /* Verificación automática simulada: no existe una API pública en España para
    comprobar licencias de navegación o matrículas contra un registro oficial,
    así que este paso queda a la espera de un servicio de verificación real
-   (o revisión manual de Marea) más adelante. */
+   (o revisión manual de Yacht Today) más adelante. */
 function useVerificacionAutomatica() {
   const [estado, setEstado] = useState("idle"); // idle | verificando | verificado
   const iniciar = (callback) => {
@@ -1022,43 +1446,147 @@ export default function App() {
   const [auth, setAuth] = useState(null);
   const [reservas, setReservas] = useState([]);
   const [misBarcos, setMisBarcos] = useState([]);
-  const [reservasRecibidas, setReservasRecibidas] = useState([]);
+  const [reservasRecibidasFake, setReservasRecibidasFake] = useState([]);
+  const [reservasRecibidasReales, setReservasRecibidasReales] = useState([]);
+  const reservasRecibidas = useMemo(() => [...reservasRecibidasReales, ...reservasRecibidasFake], [reservasRecibidasReales, reservasRecibidasFake]);
   const [favoritos, setFavoritos] = useState([]);
   const [cancelando, setCancelando] = useState(null);
   const [especificando, setEspecificando] = useState(null);
   const [cancelandoProp, setCancelandoProp] = useState(null);
   const [avisosPropietario, setAvisosPropietario] = useState(0);
   const [resenando, setResenando] = useState(null);
+  const [eliminandoAnuncio, setEliminandoAnuncio] = useState(null);
+  const [errorEliminarAnuncio, setErrorEliminarAnuncio] = useState("");
+  const [cargandoSesion, setCargandoSesion] = useState(true);
+  const [anuncios, setAnuncios] = useState([]);
+  const [cargandoAnuncios, setCargandoAnuncios] = useState(true);
+  const [anunciosRevision, setAnunciosRevision] = useState([]);
+  const [mensaje, setMensaje] = useState(null);
+  const [errorCobros, setErrorCobros] = useState("");
+  const esAdmin = usuario?.email === ADMIN_EMAIL;
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => { setUsuario(usuarioDeSesion(data.session)); setCargandoSesion(false); });
+    const { data: sub } = supabase.auth.onAuthStateChange((_evento, session) => setUsuario(usuarioDeSesion(session)));
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    listarAnunciosPublicados().then(setAnuncios).catch(console.error).finally(() => setCargandoAnuncios(false));
+  }, []);
+
+  useEffect(() => {
+    if (!usuario) return;
+    listarMisAnuncios(usuario.id).then(setMisBarcos).catch(console.error);
+    listarMisReservas(usuario.id).then(setReservas).catch(console.error);
+    listarReservasRecibidas(usuario.id).then(setReservasRecibidasReales).catch(console.error);
+  }, [usuario?.id]);
+
+  useEffect(() => {
+    if (!esAdmin) return;
+    listarAnunciosEnRevision().then(setAnunciosRevision).catch(console.error);
+  }, [esAdmin]);
+
+  const revisarAnuncio = async (anuncio, estado) => {
+    await cambiarEstadoAnuncio(anuncio.id, estado);
+    setAnunciosRevision((p) => p.filter((a) => a.id !== anuncio.id));
+    if (estado === "Publicado") setAnuncios((p) => [{ ...anuncio, estado }, ...p]);
+  };
+
+  // Vuelta desde Stripe (pago de una reserva, o alta de cobros de un propietario).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const pago = params.get("pago");
+    const stripe = params.get("stripe");
+    if (!pago && !stripe) return;
+    window.history.replaceState(null, "", window.location.pathname);
+
+    if (pago === "exito") {
+      setMensaje({ tipo: "ok", texto: "Pago recibido. Confirmando tu reserva…" });
+      setTimeout(() => {
+        supabase.auth.getSession().then(({ data }) => {
+          const u = usuarioDeSesion(data.session);
+          if (u) listarMisReservas(u.id).then(setReservas).catch(console.error);
+        });
+        setMensaje({ tipo: "ok", texto: "¡Reserva confirmada! Ya la tienes en tu panel." });
+      }, 2500);
+    } else if (pago === "cancelado") {
+      setMensaje({ tipo: "info", texto: "Has cancelado el pago. No se te ha cobrado nada." });
+    } else if (stripe === "vuelta") {
+      supabase.auth.refreshSession();
+      setMensaje({ tipo: "ok", texto: "Datos de cobro guardados en Stripe." });
+    }
+  }, []);
+
+  const conectarStripe = async () => {
+    setErrorCobros("");
+    try {
+      const url = await conectarCobros();
+      window.location.href = url;
+    } catch (err) {
+      setErrorCobros(err.message || "No se ha podido conectar con Stripe.");
+    }
+  };
 
   const ir = (v) => { setVista(v); setMenu(false); window.scrollTo(0, 0); };
   const abrir = (x) => { setItem(x); setVista("ficha"); setMenu(false); window.scrollTo(0, 0); };
   const abrirAuth = (tab = "entrar", rolPre = null, pendiente = null) => { setAuth({ tab, rolPre, pendiente }); setMenu(false); };
-  const completarAuth = (u) => { const p = auth?.pendiente; setUsuario(u); setAuth(null); if (p === "publicar") { setVista("publicar"); window.scrollTo(0, 0); } else if (p !== "reservar") { setVista("panel"); window.scrollTo(0, 0); } };
-  const cerrarSesion = () => { setUsuario(null); setReservas([]); setMisBarcos([]); setReservasRecibidas([]); setFavoritos([]); setAvisosPropietario(0); ir("home"); };
+  const completarAuth = () => { const p = auth?.pendiente; setAuth(null); if (p === "publicar") { setVista("publicar"); window.scrollTo(0, 0); } else if (p !== "reservar") { setVista("panel"); window.scrollTo(0, 0); } };
+  const cerrarSesion = async () => { await supabase.auth.signOut(); setReservas([]); setMisBarcos([]); setReservasRecibidasFake([]); setReservasRecibidasReales([]); setFavoritos([]); setAvisosPropietario(0); ir("home"); };
   const irPublicar = () => (usuario ? ir("publicar") : abrirAuth("registro", "propietario", "publicar"));
   const setClaseReset = (c) => { setClase(c); setTipo(null); };
   const abrirCategoria = (c) => { setClase(c.clase); setTipo(c.key); setSoloPatron(false); ir("explorar"); };
   const toggleFav = (b) => setFavoritos((p) => (p.find((x) => x.id === b.id) ? p.filter((x) => x.id !== b.id) : [b, ...p]));
-  const confirmarCancelacion = () => { setReservas((p) => p.filter((r) => r.id !== cancelando.id)); setCancelando(null); };
-  const finalizarReservaRecibida = (id) => setReservasRecibidas((p) => p.map((r) => (r.id === id ? { ...r, estado: "finalizada", fianzaEstado: r.fianzaEstado ? "liberada" : r.fianzaEstado } : r)));
-  const simularVistoBueno = (id) => setReservas((p) => p.map((r) => (r.id === id ? { ...r, fianzaEstado: "liberada" } : r)));
+  const confirmarCancelacion = () => {
+    actualizarReserva(cancelando.id, { estado: "cancelada" }).catch(console.error);
+    setReservas((p) => p.filter((r) => r.id !== cancelando.id));
+    setCancelando(null);
+  };
+  const finalizarReservaRecibida = (id) => {
+    const aplicar = (p) => {
+      const r = p.find((x) => x.id === id);
+      if (!r) return p;
+      const fianzaEstado = r.fianzaEstado ? "liberada" : r.fianzaEstado;
+      actualizarReserva(id, { estado: "finalizada", ...(fianzaEstado ? { fianza_estado: fianzaEstado } : {}) }).catch(console.error);
+      return p.map((x) => (x.id === id ? { ...x, estado: "finalizada", fianzaEstado } : x));
+    };
+    setReservasRecibidasReales(aplicar);
+    setReservasRecibidasFake(aplicar);
+  };
+  const simularVistoBueno = (id) => {
+    actualizarReserva(id, { fianza_estado: "liberada" }).catch(console.error);
+    setReservas((p) => p.map((r) => (r.id === id ? { ...r, fianzaEstado: "liberada" } : r)));
+  };
   const guardarEspecificaciones = (id, motorModelo, motorNotas) => setMisBarcos((p) => p.map((b) => (b.id === id ? { ...b, motorModelo, motorNotas } : b)));
   const guardarResena = (estrellas, comentario) => {
+    actualizarReserva(resenando.id, { estado: "finalizada", resena_estrellas: estrellas, resena_comentario: comentario || null }).catch(console.error);
     setReservas((p) => p.map((r) => (r.id === resenando.id ? { ...r, estado: "finalizada", resena: { estrellas, comentario } } : r)));
     setResenando(null);
   };
   const confirmarCancelacionPropietario = (justificado) => {
-    setReservasRecibidas((p) => p.filter((r) => r.id !== cancelandoProp.id));
+    actualizarReserva(cancelandoProp.id, { estado: "cancelada" }).catch(console.error);
+    setReservasRecibidasReales((p) => p.filter((r) => r.id !== cancelandoProp.id));
+    setReservasRecibidasFake((p) => p.filter((r) => r.id !== cancelandoProp.id));
     if (!justificado) setAvisosPropietario((p) => p + 1);
     setCancelandoProp(null);
   };
   const activarUltimaHora = (id, descuento) => setMisBarcos((p) => p.map((b) => (b.id === id ? { ...b, ultimaHora: { activo: true, descuento } } : b)));
   const desactivarUltimaHora = (id) => setMisBarcos((p) => p.map((b) => (b.id === id ? { ...b, ultimaHora: { activo: false, descuento: 0 } } : b)));
+  const confirmarEliminarAnuncio = async () => {
+    setErrorEliminarAnuncio("");
+    try {
+      await eliminarAnuncio(eliminandoAnuncio.id);
+      setMisBarcos((p) => p.filter((b) => b.id !== eliminandoAnuncio.id));
+      setEliminandoAnuncio(null);
+    } catch (err) {
+      setErrorEliminarAnuncio(err.message || "No se ha podido eliminar el anuncio. Inténtalo de nuevo.");
+    }
+  };
   const quitarFiltros = () => { setClaseReset("todo"); setZona("Todas"); setSoloPatron(false); setQ(""); };
 
   const subChips = clase === "experiencia" ? ACTIVIDADES : clase === "material" ? MATERIALES : clase === "barco" ? TIPOS : null;
 
-  const filtrados = useMemo(() => TODOS.filter((x) => {
+  const filtrados = useMemo(() => anuncios.filter((x) => {
     if (clase !== "todo" && x.clase !== clase) return false;
     if (zona !== "Todas" && x.zona !== zona) return false;
     if (tipo) { const key = x.clase === "experiencia" ? x.actividad : x.tipo; if (key !== tipo) return false; }
@@ -1069,21 +1597,27 @@ export default function App() {
       if (!campos.includes(t)) return false;
     }
     return true;
-  }), [clase, tipo, zona, soloPatron, q]);
+  }), [anuncios, clase, tipo, zona, soloPatron, q]);
 
   return (
     <div className="app">
       <style>{CSS}</style>
+      {mensaje && (
+        <div className={`banner-flot ${mensaje.tipo === "ok" ? "banner-ok" : "banner-info"}`}>
+          <span>{mensaje.texto}</span>
+          <button onClick={() => setMensaje(null)}><X size={15} /></button>
+        </div>
+      )}
       <div className="ribbon">Cuanto más navegas, más ganas · El barco es de otro, el día es tuyo</div>
 
       <header className="nav">
-        <button className="marca" onClick={() => ir("home")}><LogoMarea /><span className="marca-txt"><span className="serif wordmark">Marea</span><span className="marca-tag">Alquila el mar</span></span></button>
+        <button className="marca" onClick={() => ir("home")}><LogoYachtToday /><span className="marca-txt"><span className="serif wordmark">Yacht Today</span><span className="marca-tag">Alquila el mar</span></span></button>
         <nav className={`links ${menu ? "abierto" : ""}`}>
           <button onClick={() => { setClaseReset("barco"); setSoloPatron(false); ir("explorar"); }}>Embarcaciones</button>
           <button onClick={() => { setClaseReset("experiencia"); ir("explorar"); }}>Experiencias</button>
           <button onClick={() => ir("ventajas")}>Ventajas</button>
           <button onClick={irPublicar}>Publica lo tuyo</button>
-          {usuario ? (<><button className="perfil-link" onClick={() => ir("panel")}><span className="avatar-mini">{iniciales(usuario.nombre)}</span> Mi panel</button><button className="btn-salir" onClick={cerrarSesion}><LogOut size={16} /></button></>)
+          {cargandoSesion ? null : usuario ? (<><button className="perfil-link" onClick={() => ir("panel")}><span className="avatar-mini">{iniciales(usuario.nombre)}</span> Mi panel</button><button className="btn-salir" onClick={cerrarSesion}><LogOut size={16} /></button></>)
             : <button className="btn-entrar" onClick={() => abrirAuth("entrar")}>Entrar</button>}
         </nav>
         <button className="hamburguesa" onClick={() => setMenu((m) => !m)}>{menu ? <X size={22} /> : <Menu size={22} />}</button>
@@ -1109,7 +1643,7 @@ export default function App() {
 
           <section className="seccion">
             <div className="sec-head"><h2 className="serif">Destacados esta semana</h2><button className="link-mas" onClick={() => { setClaseReset("todo"); ir("explorar"); }}>Ver todo →</button></div>
-            <div className="grid">{[BARCOS[7], EXPERIENCIAS[0], BARCOS[1], MATERIAL[0]].map((b) => <Tarjeta key={b.id} item={b} onOpen={abrir} />)}</div>
+            <div className="grid">{anuncios.slice(0, 4).map((b) => <Tarjeta key={b.id} item={b} onOpen={abrir} />)}</div>
           </section>
 
           <section className="banner-ventajas" onClick={() => ir("ventajas")}>
@@ -1135,7 +1669,7 @@ export default function App() {
 
       {vista === "explorar" && (
         <section className="explorar">
-          <div className="explorar-head"><h1 className="serif">{filtrados.length} resultados{zona !== "Todas" ? ` en ${zona}` : " en toda España"}</h1><p className="sub">Cancela sin recargo hasta 48 h antes · anfitriones verificados</p></div>
+          <div className="explorar-head"><h1 className="serif">{cargandoAnuncios ? "Cargando…" : `${filtrados.length} resultados${zona !== "Todas" ? ` en ${zona}` : " en toda España"}`}</h1><p className="sub">Cancela sin recargo hasta 48 h antes · anfitriones verificados</p></div>
           <div className="buscador-rapido"><Search size={16} /><input type="text" placeholder="Busca por nombre, puerto o zona…" value={q} onChange={(e) => setQ(e.target.value)} />{q && <button className="brapido-x" onClick={() => setQ("")}><X size={14} /></button>}</div>
           <div className="clase-seg">{CLASES.map((c) => <button key={c.v} className={clase === c.v ? "cs on" : "cs"} onClick={() => setClaseReset(c.v)}>{c.t}</button>)}</div>
           {subChips && (
@@ -1149,31 +1683,35 @@ export default function App() {
             </div>
           )}
           <div className="filtros-fila"><select value={zona} onChange={(e) => setZona(e.target.value)}>{ZONAS.map((z) => <option key={z}>{z === "Todas" ? "Toda España" : z}</option>)}</select>{(clase === "todo" || clase === "barco") && <label className="check"><input type="checkbox" checked={soloPatron} onChange={(e) => setSoloPatron(e.target.checked)} /> Con patrón</label>}</div>
-          {filtrados.length ? <div className="grid">{filtrados.map((b) => <Tarjeta key={b.id} item={b} onOpen={abrir} />)}</div>
-            : <div className="vacio"><Sailboat size={30} /><p>No hay resultados con esos filtros.</p><button className="btn-sec" onClick={quitarFiltros}>Quitar filtros</button></div>}
+          {cargandoAnuncios ? <div className="vacio"><Sailboat size={30} /><p>Cargando anuncios…</p></div>
+            : filtrados.length ? <div className="grid">{filtrados.map((b) => <Tarjeta key={b.id} item={b} onOpen={abrir} />)}</div>
+              : <div className="vacio"><Sailboat size={30} /><p>No hay resultados con esos filtros.</p><button className="btn-sec" onClick={quitarFiltros}>Quitar filtros</button></div>}
         </section>
       )}
 
-      {vista === "ficha" && item && (<Ficha item={item} usuario={usuario} numReservas={reservas.filter((r) => r.estado === "finalizada").length} onBack={() => ir("explorar")} onAbrir={abrir} esFavorito={!!favoritos.find((x) => x.id === item.id)} onToggleFav={toggleFav} onNecesitaCuenta={() => abrirAuth("registro", "cliente", "reservar")} onReservado={(r) => setReservas((p) => [r, ...p])} />)}
-      {vista === "ventajas" && <Ventajas onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} />}
-      {vista === "publicar" && usuario && <Publicar onDone={() => ir("panel")} onPublicado={(b) => { setMisBarcos((p) => [b, ...p]); setReservasRecibidas((p) => [...generarReservasFake(b), ...p]); }} />}
-      {vista === "panel" && usuario && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onSimularVistoBueno={simularVistoBueno} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} />)}
+      {vista === "ficha" && item && (<Ficha item={item} usuario={usuario} numReservas={reservas.filter((r) => r.estado === "finalizada").length} onBack={() => ir("explorar")} esFavorito={!!favoritos.find((x) => x.id === item.id)} onToggleFav={toggleFav} onNecesitaCuenta={() => abrirAuth("registro", "cliente", "reservar")} />)}
+      {vista === "ventajas" && <Ventajas onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onMantenimiento={() => ir("mantenimiento")} />}
+      {vista === "mantenimiento" && <SpenMechanics />}
+      {(vista === "contacto" || vista === "faq" || vista === "cancelaciones") && <Ayuda seccion={vista} onCambiar={ir} usuario={usuario} onIrPanel={() => ir("panel")} onAbrirAuth={abrirAuth} />}
+      {vista === "publicar" && usuario && <Publicar usuario={usuario} onDone={() => ir("panel")} onPublicado={(b) => { setMisBarcos((p) => [b, ...p]); setReservasRecibidasFake((p) => [...generarReservasFake(b), ...p]); }} />}
+      {vista === "panel" && usuario && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={(a) => revisarAnuncio(a, "Rechazado")} onConectarStripe={conectarStripe} errorCobros={errorCobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onSimularVistoBueno={simularVistoBueno} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEliminarAnuncio={setEliminandoAnuncio} />)}
 
       {auth && <AuthModal tab={auth.tab} rolPre={auth.rolPre} onClose={() => setAuth(null)} onCambiarTab={(t) => setAuth((a) => ({ ...a, tab: t }))} onAuth={completarAuth} />}
       {cancelando && <CancelarModal reserva={cancelando} onClose={() => setCancelando(null)} onConfirmar={confirmarCancelacion} />}
       {especificando && <EspecificacionesModal barco={especificando} onClose={() => setEspecificando(null)} onGuardar={(modelo, notas) => guardarEspecificaciones(especificando.id, modelo, notas)} />}
       {cancelandoProp && <CancelarPropietarioModal reserva={cancelandoProp} onClose={() => setCancelandoProp(null)} onConfirmar={confirmarCancelacionPropietario} />}
       {resenando && <ResenaModal reserva={resenando} onClose={() => setResenando(null)} onGuardar={guardarResena} />}
+      {eliminandoAnuncio && <EliminarAnuncioModal anuncio={eliminandoAnuncio} error={errorEliminarAnuncio} onClose={() => { setEliminandoAnuncio(null); setErrorEliminarAnuncio(""); }} onConfirmar={confirmarEliminarAnuncio} />}
 
       <footer className="footer" style={{ backgroundImage: `linear-gradient(rgba(15,39,50,.88), rgba(15,39,50,.94)), url(${FOOTER_FOTO})` }}>
-        <div className="foot-marca"><LogoMarea size={34} /><div><span className="serif wordmark blanco">Marea</span><p className="foot-tag">Alquila el mar · Barcos, experiencias y material náutico entre particulares, en toda España.</p></div></div>
+        <div className="foot-marca"><LogoYachtToday size={34} /><div><span className="serif wordmark blanco">Yacht Today</span><p className="foot-tag">Alquila el mar · Barcos, experiencias y material náutico entre particulares, en toda España.</p></div></div>
         <div className="foot-cols">
           <div><h4>Explorar</h4><button onClick={() => { setClaseReset("barco"); ir("explorar"); }}>Barcos</button><button onClick={() => { setClaseReset("experiencia"); ir("explorar"); }}>Experiencias</button><button onClick={() => { setClaseReset("material"); ir("explorar"); }}>SUP y kayak</button></div>
-          <div><h4>Marea</h4><button onClick={() => ir("ventajas")}>Ventajas</button><button onClick={irPublicar}>Publica lo tuyo</button><button onClick={() => ir("home")}>Cómo funciona</button></div>
-          <div><h4>Ayuda</h4><button onClick={() => ir("home")}>Contacto</button><button onClick={() => ir("home")}>Preguntas frecuentes</button><button onClick={() => ir("home")}>Cancelaciones</button></div>
+          <div><h4>Yacht Today</h4><button onClick={() => ir("ventajas")}>Ventajas</button><button onClick={irPublicar}>Publica lo tuyo</button><button onClick={() => ir("home")}>Cómo funciona</button></div>
+          <div><h4>Ayuda</h4><button onClick={() => ir("contacto")}>Contacto</button><button onClick={() => ir("faq")}>Preguntas frecuentes</button><button onClick={() => ir("cancelaciones")}>Cancelaciones</button></div>
         </div>
       </footer>
-      <div className="foot-legal">Prototipo · Marea © 2026</div>
+      <div className="foot-legal">Prototipo · Yacht Today © 2026</div>
     </div>
   );
 }
@@ -1239,6 +1777,7 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .card{display:block;text-align:left;background:var(--blanco);border:1px solid var(--linea);border-radius:20px;overflow:hidden;width:100%;transition:transform .18s,box-shadow .18s}
 .card:hover{transform:translateY(-4px);box-shadow:0 24px 46px -24px rgba(22,50,63,.45)}
 .foto{position:relative;display:grid;place-items:center;overflow:hidden}
+.foto-img{width:100%;height:100%;object-fit:cover}
 .foto-sol{position:absolute;top:16px;right:22px;width:46px;height:46px;border-radius:50%;background:radial-gradient(circle,rgba(246,217,140,.9),rgba(235,183,101,0) 70%)}
 .foto-tag{position:absolute;left:12px;bottom:12px;background:rgba(15,39,50,.6);color:var(--arena);font-size:11px;padding:4px 11px;border-radius:999px;backdrop-filter:blur(4px)}
 .card-body{padding:16px 17px}
@@ -1273,6 +1812,7 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .claro-btn{background:var(--arena)!important;color:var(--noche)!important}.claro-btn:hover{background:var(--brisa)!important}
 
 .btn-primario{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:var(--noche);color:var(--arena);font-weight:600;font-size:15.5px;padding:14px 26px;border-radius:12px;transition:background .15s}
+.btn-primario.sm{padding:8px 14px;font-size:13px;border-radius:11px}
 .btn-primario:hover{background:var(--mar)}
 .btn-primario:disabled{background:var(--linea);color:var(--muted);cursor:not-allowed}
 .btn-primario.ancho{width:100%}.btn-primario.auto{width:auto}
@@ -1368,6 +1908,10 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .ok h3{font-size:23px;margin-bottom:8px}.ok p{color:var(--slate);margin-bottom:16px}
 .ok-resumen{display:flex;justify-content:space-between;background:var(--arena);padding:13px;border-radius:11px;margin-bottom:14px;font-weight:600;color:var(--tinta)}
 
+.banner-flot{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:80;display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:12px;font-size:14px;font-weight:600;box-shadow:0 8px 24px rgba(15,39,50,.25);max-width:92vw}
+.banner-flot button{display:flex;opacity:.7}.banner-flot button:hover{opacity:1}
+.banner-ok{background:var(--noche);color:var(--arena)}
+.banner-info{background:var(--arena2);color:var(--tinta)}
 .modal-overlay{position:fixed;inset:0;z-index:60;background:rgba(15,39,50,.58);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:20px}
 .modal{position:relative;background:var(--arena);width:100%;max-width:424px;border-radius:22px;padding:30px;max-height:92vh;overflow:auto;box-shadow:0 40px 90px -30px rgba(0,0,0,.6)}
 .modal-x{position:absolute;top:16px;right:16px;color:var(--muted);width:34px;height:34px;border-radius:50%;display:grid;place-items:center}.modal-x:hover{background:var(--arena2)}
@@ -1384,6 +1928,8 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .field.ico>div{display:flex;align-items:center;gap:8px;border:1px solid var(--linea);border-radius:10px;background:var(--blanco);padding:0 12px;color:var(--muted)}
 .field.ico input{border:none;outline:none;padding:11px 0;width:100%;background:none}
 .rol-bloque{margin:4px 0}.rol-label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:8px}
+.auth-error{color:var(--coral);font-size:13px;background:rgba(214,112,106,.1);border-radius:8px;padding:9px 12px;margin:2px 0}
+.ok.sin-borde{margin:8px auto 0;border:none;padding:6px 0 0;background:none}
 .rol-chips{display:flex;gap:8px;flex-wrap:wrap}
 .rc{flex:1;min-width:108px;padding:11px 8px;border-radius:11px;background:var(--blanco);border:1px solid var(--linea);font-size:12.5px;font-weight:600;color:var(--slate)}
 .rc:hover{border-color:var(--mar)}.rc.on{background:var(--noche);color:var(--arena);border-color:var(--noche)}
@@ -1466,6 +2012,30 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .ref{background:var(--blanco);border:1px solid var(--linea);border-radius:18px;padding:22px}
 .ref svg{color:var(--mar)}.ref b{display:block;color:var(--tinta);margin:10px 0 5px;font-size:16px}.ref p{font-size:13.5px;color:var(--slate)}
 
+.ayuda-tabs{display:flex;gap:8px;max-width:1120px;margin:0 auto;padding:0 clamp(16px,4vw,44px);flex-wrap:wrap}
+.at{display:inline-flex;align-items:center;gap:7px;padding:10px 16px;border-radius:999px;border:1px solid var(--linea);background:var(--blanco);color:var(--slate);font-weight:600;font-size:14px}
+.at:hover{border-color:var(--mar);color:var(--tinta)}
+.at.on{background:var(--noche);border-color:var(--noche);color:var(--arena)}
+.contacto-grid{display:grid;grid-template-columns:280px 1fr;gap:28px;align-items:start}
+.contacto-info{display:flex;flex-direction:column;gap:16px}
+.faq-grupo{margin-bottom:30px}
+.faq-cat{font-size:19px;margin-bottom:12px}
+.faq-lista{display:flex;flex-direction:column;gap:8px}
+.faq-item{border:1px solid var(--linea);border-radius:14px;background:var(--blanco);overflow:hidden}
+.faq-p{width:100%;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:15px 18px;text-align:left;font-weight:600;color:var(--tinta);font-size:14.5px}
+.faq-chevron{flex-shrink:0;color:var(--muted);transition:transform .16s}
+.faq-item.on .faq-chevron{transform:rotate(180deg);color:var(--mar)}
+.faq-r{padding:0 18px 16px;color:var(--slate);font-size:14px;line-height:1.6}
+.cancel-intro{color:var(--slate);max-width:680px;font-size:15.5px;margin-bottom:22px}
+.cancel-tabla{border:1px solid var(--linea);border-radius:16px;overflow:hidden;margin-bottom:26px}
+.cancel-fila{display:grid;grid-template-columns:1fr auto 1.4fr;gap:14px;align-items:center;padding:14px 18px;border-bottom:1px solid var(--linea)}
+.cancel-fila:last-child{border-bottom:none}
+.cancel-cuando{font-weight:600;color:var(--tinta);font-size:14.5px}
+.cancel-reembolso{font-family:'Newsreader',serif;font-weight:600;font-size:19px;color:var(--mar)}
+.cancel-nota{font-size:13px;color:var(--muted)}
+.cancel-cta{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;background:var(--arena2);border-radius:16px;padding:20px 24px;margin-top:26px}
+.cancel-cta p{font-weight:600;color:var(--tinta)}
+
 .publicar{max-width:1040px;margin:0 auto;padding:clamp(30px,5vw,54px) clamp(16px,4vw,52px)}
 .pub-titulo{font-size:clamp(30px,4.5vw,44px);margin:8px 0 10px}
 .pub-sub{color:var(--slate);max-width:600px;font-size:17px;margin-bottom:26px}
@@ -1476,7 +2046,18 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .form{display:flex;flex-direction:column;gap:14px}
 .fila{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .field input,.field select,.field textarea{padding:11px 13px;border:1px solid var(--linea);border-radius:10px;background:var(--blanco);resize:vertical}
-.fotos-drop{display:flex;align-items:center;justify-content:center;gap:8px;padding:22px;border:1.5px dashed var(--linea);border-radius:12px;color:var(--muted);font-size:13.5px;margin-bottom:14px}
+.fotos-drop{display:flex;align-items:center;justify-content:center;gap:8px;padding:22px;border:1.5px dashed var(--linea);border-radius:12px;color:var(--muted);font-size:13.5px;margin-bottom:14px;width:100%}
+.fotos-drop:hover{border-color:var(--mar);color:var(--mar)}
+.fotos-previews{display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:8px;margin:-6px 0 14px}
+.fotos-preview{position:relative;height:74px;border-radius:10px;overflow:hidden}
+.fotos-preview img{width:100%;height:100%;object-fit:cover}
+.fotos-preview-x{position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:rgba(15,39,50,.7);color:var(--arena);display:grid;place-items:center}
+.equipo-pub{margin-bottom:16px}
+.equipo-pub>span{display:block;font-size:13px;color:var(--slate);margin-bottom:8px}
+.equipo-check-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin-bottom:12px}
+.equipo-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.equipo-chip{display:inline-flex;align-items:center;gap:6px;background:var(--arena2);color:var(--tinta);font-size:13px;padding:6px 10px;border-radius:20px}
+.equipo-chip button{display:flex;color:var(--muted)}.equipo-chip button:hover{color:var(--tinta)}
 .consentimiento{display:flex;align-items:flex-start;gap:10px;font-size:12px;color:var(--slate);line-height:1.5;margin-bottom:16px;cursor:pointer}
 .consentimiento input{margin-top:2px;accent-color:var(--mar);width:16px;height:16px;flex-shrink:0}
 .ganancias{background:var(--noche);color:var(--arena);border-radius:20px;padding:26px;position:sticky;top:90px}
@@ -1499,7 +2080,7 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 
 @media(max-width:900px){.panel-wrap{grid-template-columns:1fr}.panel-side{position:static}}
 @media(max-width:820px){
-  .ficha-grid,.pub-grid{grid-template-columns:1fr}
+  .ficha-grid,.pub-grid,.contacto-grid{grid-template-columns:1fr}
   .reserva,.ganancias{position:static}
   .specs{grid-template-columns:repeat(2,1fr)}
   .galeria{grid-template-columns:repeat(2,1fr)}
@@ -1515,6 +2096,8 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
   .foot-cols{gap:28px;width:100%;justify-content:space-between}
   .cta-prop,.banner-ventajas{flex-direction:column;align-items:flex-start;text-align:left}
   .cta-prop .btn-primario,.banner-ventajas .banner-cta{align-self:flex-start}
+  .cancel-fila{grid-template-columns:1fr}
+  .cancel-reembolso{order:-1}
 }
 @media(max-width:480px){
   .modal-overlay{padding:12px}

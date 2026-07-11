@@ -69,3 +69,25 @@ export async function subirFotos(propietarioId, archivos) {
   }
   return urls;
 }
+
+// Sube documentación (matrícula, póliza...) a un bucket privado y devuelve rutas de Storage,
+// no URLs públicas: solo el propio propietario y la cuenta admin pueden verlas (ver documentos.sql).
+export async function subirDocumentos(propietarioId, archivos) {
+  const rutas = [];
+  for (const archivo of archivos) {
+    const limpio = archivo.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+    const ruta = `${propietarioId}/${Date.now()}-${limpio}`;
+    const { error } = await supabase.storage.from("documentos-anuncios").upload(ruta, archivo);
+    if (error) throw error;
+    rutas.push(ruta);
+  }
+  return rutas;
+}
+
+// Genera una URL temporal (2 min) para ver un documento privado. RLS decide si el usuario
+// autenticado tiene permiso (es el propietario o es la cuenta admin).
+export async function urlFirmadaDocumento(ruta) {
+  const { data, error } = await supabase.storage.from("documentos-anuncios").createSignedUrl(ruta, 120);
+  if (error) throw error;
+  return data.signedUrl;
+}

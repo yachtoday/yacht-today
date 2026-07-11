@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabaseClient";
-import { listarAnunciosPublicados, listarMisAnuncios, crearAnuncio, subirFotos, eliminarAnuncio, listarAnunciosEnRevision, cambiarEstadoAnuncio } from "./lib/anuncios";
+import { listarAnunciosPublicados, listarMisAnuncios, crearAnuncio, subirFotos, subirDocumentos, urlFirmadaDocumento, eliminarAnuncio, listarAnunciosEnRevision, cambiarEstadoAnuncio } from "./lib/anuncios";
 import { listarMisReservas, listarReservasRecibidas, actualizarReserva } from "./lib/reservas";
 import { iniciarPago, conectarCobros } from "./lib/pagos";
 import {
@@ -9,7 +9,7 @@ import {
   User, Mail, Phone, Lock, BadgeCheck, LogOut, Heart, Share2, Minus,
   CalendarCheck, ClipboardList, Sparkles, Fish, Wind, Gift, Trophy,
   Clock, Award, Waypoints, Handshake, Zap, CloudRain,
-  ChevronDown, MessageCircle, HelpCircle, RotateCcw, Trash2, Wrench,
+  ChevronDown, MessageCircle, HelpCircle, RotateCcw, Trash2, Wrench, FileText,
 } from "lucide-react";
 import fotoHero from "./assets/fotos/hero-845.jpg";
 import fotoMarina from "./assets/fotos/marina-5075093.jpg";
@@ -774,7 +774,7 @@ function estadoFidelidad(count) {
 }
 
 /* ── Panel de usuario ────────────────────────────────────────────── */
-function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onConectarStripe, errorCobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onSimularVistoBueno, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEliminarAnuncio }) {
+function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onSimularVistoBueno, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEliminarAnuncio }) {
   const esCliente = usuario.rol === "cliente" || usuario.rol === "ambas";
   const esProp = usuario.rol === "propietario" || usuario.rol === "ambas";
   const activas = reservas.filter((r) => r.estado !== "finalizada").slice().sort((a, b) => new Date(a.inicioISO) - new Date(b.inicioISO));
@@ -805,7 +805,9 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
         {esAdmin && (
           <section className="panel-sec">
             <h2 className="serif sec-t"><ShieldCheck size={18} /> Anuncios pendientes de revisión</h2>
-            {anunciosRevision.length ? (<ul className="lista">{anunciosRevision.map((a) => (
+            {anunciosRevision.length ? (<ul className="lista">{anunciosRevision.map((a) => {
+              const seguroCaducado = a.caducidad_seguro && a.caducidad_seguro < new Date().toISOString().slice(0, 10);
+              return (
               <li key={a.id} className="lista-item lista-item-col">
                 <div className="li-fila">
                   <div><p className="li-nombre">{a.nombre}</p><p className="li-sub">{a.clase} · {a.puerto}</p></div>
@@ -814,8 +816,22 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
                     <button className="btn-primario sm" onClick={() => onAprobarAnuncio(a)}>Aprobar</button>
                   </div>
                 </div>
+                <div className="li-doc">
+                  {a.matricula && <span>Matrícula: <b>{a.matricula}</b></span>}
+                  {a.poliza && <span>Seguro: <b>{a.poliza}</b></span>}
+                  {a.caducidad_seguro && <span>Caducidad: <b>{new Date(a.caducidad_seguro).toLocaleDateString("es-ES")}</b></span>}
+                </div>
+                {seguroCaducado && <p className="mini-nota mini-nota-error">⚠ El seguro de este anuncio ya ha caducado.</p>}
+                {a.documentos?.length > 0 && (
+                  <div className="li-doc-btns">
+                    {a.documentos.map((ruta, i) => (
+                      <button key={ruta} type="button" className="btn-sec sm" onClick={() => onVerDocumento(ruta)}><FileText size={13} /> Ver documento {i + 1}</button>
+                    ))}
+                  </div>
+                )}
               </li>
-            ))}</ul>)
+              );
+            })}</ul>)
               : <p className="mini-nota">No hay anuncios esperando revisión.</p>}
           </section>
         )}
@@ -1220,9 +1236,12 @@ function Publicar({ usuario, onDone, onPublicado }) {
   const [descripcion, setDescripcion] = useState("");
   const [fotos, setFotos] = useState([]);
   const fotosInputRef = useRef(null);
+  const [documentos, setDocumentos] = useState([]);
+  const documentosInputRef = useRef(null);
   const [matricula, setMatricula] = useState("");
   const [poliza, setPoliza] = useState("");
   const [caducidadSeguro, setCaducidadSeguro] = useState("");
+  const hoyISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [avisoHoras, setAvisoHoras] = useState("");
   const [equipoSel, setEquipoSel] = useState([]);
   const [equipoCustom, setEquipoCustom] = useState([]);
@@ -1236,6 +1255,8 @@ function Publicar({ usuario, onDone, onPublicado }) {
   useEffect(() => () => previews.forEach((u) => URL.revokeObjectURL(u)), [previews]);
   const agregarFotos = (e) => { setFotos((p) => [...p, ...Array.from(e.target.files || [])].slice(0, 6)); e.target.value = ""; };
   const quitarFoto = (i) => setFotos((p) => p.filter((_, idx) => idx !== i));
+  const agregarDocumentos = (e) => { setDocumentos((p) => [...p, ...Array.from(e.target.files || [])].slice(0, 4)); e.target.value = ""; };
+  const quitarDocumento = (i) => setDocumentos((p) => p.filter((_, idx) => idx !== i));
   useEffect(() => setEquipoSel([]), [clase]);
   const agregarEquipoCustom = () => {
     const v = equipoNuevo.trim();
@@ -1246,7 +1267,8 @@ function Publicar({ usuario, onDone, onPublicado }) {
   const uni = esExp ? "persona" : "día";
   const clientePaga = Math.round(precio * (1 + COMISION));
   const tuComision = clientePaga - precio;
-  const faltaDocumentacion = !consiento || !poliza.trim() || !caducidadSeguro || (!esExp && !esMat && !matricula.trim());
+  const seguroCaducado = caducidadSeguro && caducidadSeguro < hoyISO;
+  const faltaDocumentacion = !consiento || !poliza.trim() || !caducidadSeguro || seguroCaducado || (!esExp && !esMat && !matricula.trim());
 
   const publicar = () => {
     if (faltaDocumentacion) return;
@@ -1255,11 +1277,12 @@ function Publicar({ usuario, onDone, onPublicado }) {
       setErrorPublicar("");
       try {
         const urlsFotos = fotos.length ? await subirFotos(usuario.id, fotos) : [];
+        const rutasDocumentos = documentos.length ? await subirDocumentos(usuario.id, documentos) : [];
         const base = {
           clase, propietario_id: usuario.id,
           nombre: nombre.trim() || (esExp ? "Tu experiencia" : esMat ? "Tu material" : "Tu barco"),
           puerto: puerto.trim(), zona: zonaPub, descripcion: descripcion.trim(), fotos: urlsFotos,
-          poliza: poliza.trim(), caducidad_seguro: caducidadSeguro, estado: "En revisión",
+          poliza: poliza.trim(), caducidad_seguro: caducidadSeguro, documentos: rutasDocumentos, estado: "En revisión",
           aviso_minimo_horas: +avisoHoras > 0 ? +avisoHoras : null,
           equipamiento: [...equipoSel, ...equipoCustom],
         };
@@ -1279,7 +1302,7 @@ function Publicar({ usuario, onDone, onPublicado }) {
     });
   };
 
-  if (enviado) return (<div className="publicar"><div className="ok centro"><div className="ok-icon"><Check size={28} strokeWidth={3} /></div><h3 className="serif">¡Recibido!</h3><p>Documentación verificada automáticamente. Un revisor de Yacht Today le dará el visto bueno final antes de publicarlo. Lo tienes en <strong>Mis anuncios</strong>.</p><button className="btn-primario ancho" onClick={onDone}>Ir a mi panel</button></div></div>);
+  if (enviado) return (<div className="publicar"><div className="ok centro"><div className="ok-icon"><Check size={28} strokeWidth={3} /></div><h3 className="serif">¡Recibido!</h3><p>Documentación recibida. Un revisor de Yacht Today la comprobará antes de publicarlo. Lo tienes en <strong>Mis anuncios</strong>.</p><button className="btn-primario ancho" onClick={onDone}>Ir a mi panel</button></div></div>);
 
   return (
     <div className="publicar">
@@ -1363,14 +1386,24 @@ function Publicar({ usuario, onDone, onPublicado }) {
           {!esExp && !esMat && <label className="field"><span>Número de matrícula</span><input value={matricula} onChange={(e) => setMatricula(e.target.value)} placeholder="7ª-CS-1234-56" /></label>}
           <Fila>
             <label className="field"><span>Aseguradora y nº de póliza</span><input value={poliza} onChange={(e) => setPoliza(e.target.value)} placeholder="Mapfre 123456789" /></label>
-            <label className="field"><span>Caducidad del seguro</span><input type="date" value={caducidadSeguro} onChange={(e) => setCaducidadSeguro(e.target.value)} /></label>
+            <label className="field"><span>Caducidad del seguro</span><input type="date" min={hoyISO} value={caducidadSeguro} onChange={(e) => setCaducidadSeguro(e.target.value)} /></label>
           </Fila>
-          <div className="fotos-drop"><Plus size={16} /> Adjuntar documentación (próximamente)</div>
+          {seguroCaducado && <p className="mini-nota mini-nota-error">Esa fecha ya ha pasado — necesitamos la caducidad de un seguro en vigor.</p>}
+          <input ref={documentosInputRef} type="file" accept="image/*,application/pdf" multiple hidden onChange={agregarDocumentos} />
+          <button type="button" className="fotos-drop" onClick={() => documentosInputRef.current?.click()}><Plus size={16} /> {documentos.length ? "Añadir más documentos" : "Adjuntar documentación (matrícula, póliza…)"}</button>
+          {documentos.length > 0 && (
+            <div className="equipo-chips">
+              {documentos.map((f, i) => (
+                <span key={`${f.name}-${i}`} className="equipo-chip"><FileText size={12} /> {f.name} <button type="button" onClick={() => quitarDocumento(i)}><X size={12} /></button></span>
+              ))}
+            </div>
+          )}
+          <p className="mini-nota">Un revisor de Yacht Today comprobará estos documentos antes de publicar el anuncio — no existe ningún registro público en España para verificarlos de forma automática.</p>
           <ConsentimientoLegal checked={consiento} onChange={setConsiento} texto="la documentación de este anuncio (matrícula, póliza y certificados)" />
 
           {errorPublicar && <p className="auth-error">{errorPublicar}</p>}
           <button className="btn-primario ancho" onClick={publicar} disabled={faltaDocumentacion || verificacion === "verificando" || enviando}>
-            {verificacion === "verificando" ? "Verificando automáticamente…" : enviando ? "Publicando…" : "Publicar"}
+            {verificacion === "verificando" || enviando ? "Enviando…" : "Publicar"}
           </button>
           {faltaDocumentacion && <p className="mini-nota">Completa la documentación y acepta el tratamiento de datos para poder publicar.</p>}
         </div>
@@ -1491,6 +1524,15 @@ export default function App() {
     await cambiarEstadoAnuncio(anuncio.id, estado);
     setAnunciosRevision((p) => p.filter((a) => a.id !== anuncio.id));
     if (estado === "Publicado") setAnuncios((p) => [{ ...anuncio, estado }, ...p]);
+  };
+
+  const verDocumento = async (ruta) => {
+    try {
+      const url = await urlFirmadaDocumento(ruta);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      setMensaje({ tipo: "error", texto: "No se ha podido abrir el documento." });
+    }
   };
 
   // Vuelta desde Stripe (pago de una reserva, o alta de cobros de un propietario).
@@ -1694,7 +1736,7 @@ export default function App() {
       {vista === "mantenimiento" && <SpenMechanics />}
       {(vista === "contacto" || vista === "faq" || vista === "cancelaciones") && <Ayuda seccion={vista} onCambiar={ir} usuario={usuario} onIrPanel={() => ir("panel")} onAbrirAuth={abrirAuth} />}
       {vista === "publicar" && usuario && <Publicar usuario={usuario} onDone={() => ir("panel")} onPublicado={(b) => { setMisBarcos((p) => [b, ...p]); setReservasRecibidasFake((p) => [...generarReservasFake(b), ...p]); }} />}
-      {vista === "panel" && usuario && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={(a) => revisarAnuncio(a, "Rechazado")} onConectarStripe={conectarStripe} errorCobros={errorCobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onSimularVistoBueno={simularVistoBueno} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEliminarAnuncio={setEliminandoAnuncio} />)}
+      {vista === "panel" && usuario && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={(a) => revisarAnuncio(a, "Rechazado")} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onSimularVistoBueno={simularVistoBueno} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEliminarAnuncio={setEliminandoAnuncio} />)}
 
       {auth && <AuthModal tab={auth.tab} rolPre={auth.rolPre} onClose={() => setAuth(null)} onCambiarTab={(t) => setAuth((a) => ({ ...a, tab: t }))} onAuth={completarAuth} />}
       {cancelando && <CancelarModal reserva={cancelando} onClose={() => setCancelando(null)} onConfirmar={confirmarCancelacion} />}
@@ -1972,6 +2014,8 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .li-fila{display:flex;justify-content:space-between;align-items:center;gap:12px}
 .li-nombre{font-weight:600;color:var(--tinta)}.li-sub{font-size:12.5px;color:var(--muted);margin-top:2px}
 .li-acciones{display:flex;gap:8px;flex-shrink:0;align-items:center}
+.li-doc{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:var(--muted);margin-top:8px}
+.li-doc-btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .fianza-estado{display:flex;flex-direction:column;gap:5px;font-size:12.5px;color:var(--slate);background:rgba(127,178,206,.1);border-radius:10px;padding:10px 12px;margin-top:2px}
 .fianza-estado.ok{color:#3B7A5E;background:rgba(127,179,154,.15)}
 .fianza-estado span{display:flex;align-items:center;gap:6px}

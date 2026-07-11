@@ -65,8 +65,6 @@ propietarios con personas que quieren disfrutar del mar. Lema: "Alquila el mar".
    al propietario; el webhook `webhook-stripe` (verifica la firma de Stripe, sin JWT de
    usuario — `verify_jwt: false`) es el único sitio que crea la fila en `reservas` como
    pagada/confirmada. Probado de extremo a extremo en modo test el 2026-07-11.
-   Pendiente: verificación real de documentación del propietario (lista 6ª/7ª, seguro) —
-   hoy es una comprobación automática simulada (`useVerificacionAutomatica`).
 7. ✅ **Antelación mínima de reservas**: nadie puede reservar en el último minuto y dejar
    al propietario sin margen. Mínimo 3 h (barco/material) o 24 h (experiencia) entre
    reservar y el inicio; el propietario puede fijar su propio mínimo por anuncio
@@ -86,6 +84,19 @@ propietarios con personas que quieren disfrutar del mar. Lema: "Alquila el mar".
    `src/App.jsx`) con enlaces reales a `www.spenmechanics.com`. Colocada de forma
    visible en **Ventajas** y en **Mi panel** del propietario (no solo en el pie de
    página, a propósito — es donde de verdad se ve).
+10. ✅ **Documentación real de propietarios**: no existe una API pública en España para
+    verificar matrículas, licencias o seguros contra un registro oficial (por eso
+    `useVerificacionAutomatica` sigue siendo un paso simulado — solo bloquea el doble
+    envío mientras se sube todo, ya no dice "verificado automáticamente"). Lo que sí se
+    arregló es que la revisión manual del admin ahora es una revisión informada de
+    verdad: el propietario adjunta el documento real (foto o PDF) a un bucket **privado**
+    (`documentos-anuncios`, `supabase/documentos.sql` — solo el propio dueño y
+    `yachtoday@gmail.com` pueden verlo, con URLs firmadas de 2 min vía
+    `urlFirmadaDocumento`), y "Anuncios pendientes de revisión" en Mi panel muestra
+    matrícula/póliza/caducidad del seguro y un botón "Ver documento" por archivo. Se
+    bloquea publicar (cliente) con una fecha de caducidad de seguro ya pasada — el único
+    chequeo automatizable sin ninguna API externa — y se avisa en rojo al admin si un
+    anuncio ya en revisión tiene el seguro caducado.
 
 ## Revisión de anuncios (rol admin) y por qué está protegido
 Sí existe un "revisor": la cuenta `yachtoday@gmail.com` (`ADMIN_EMAIL` en `src/App.jsx`)

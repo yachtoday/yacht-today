@@ -241,17 +241,29 @@ const Chip = ({ icon: Icon, children }) => (<span className="chip"><Icon size={1
    el enlace al portapapeles y lo dice. */
 function Compartir({ item }) {
   const [copiado, setCopiado] = useState(false);
-  const compartir = async () => {
-    const url = window.location.origin + rutaDeAnuncio(item);
-    const datos = { title: `${item.nombre} · Yacht Today`, text: `${item.nombre} en ${item.puerto}`, url };
+  const copiar = async (url) => {
     try {
-      if (navigator.share) { await navigator.share(datos); return; }
       await navigator.clipboard.writeText(url);
       setCopiado(true);
       setTimeout(() => setCopiado(false), 2200);
     } catch {
-      // El usuario cerró el menú de compartir, o el navegador no deja copiar: no es un error.
+      // Navegador viejo o sin permiso de portapapeles: al menos que vea el enlace.
+      window.prompt("Copia el enlace:", url);
     }
+  };
+  const compartir = async () => {
+    const url = window.location.origin + rutaDeAnuncio(item);
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: `${item.nombre} · Yacht Today`, text: `${item.nombre} en ${item.puerto}`, url });
+        return;
+      } catch (err) {
+        // Si cerró el menú de compartir a propósito, no hacemos nada más. Si falló por otro
+        // motivo, no lo dejamos sin nada: le copiamos el enlace.
+        if (err?.name === "AbortError") return;
+      }
+    }
+    await copiar(url);
   };
   return (
     <button className="acc" onClick={compartir}>

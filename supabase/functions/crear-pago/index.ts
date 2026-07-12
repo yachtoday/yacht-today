@@ -97,7 +97,12 @@ Deno.serve(async (req) => {
     const servicio = servicioBase - ahorro;
     const total = subtotal + servicio;
     const requiereFianza = !exp && !patronActivo;
-    const fianza = requiereFianza ? Math.round(subtotal * FIANZA_PCT) : 0;
+    /* El material (SUP y kayak) lleva la fianza fija que puso su dueño: el 20 % de un
+       kayak a 15 €/día serían 3 €, que no cubren reponerlo si lo pierden. Los barcos
+       siguen con el porcentaje sobre el alquiler. */
+    const fianza = !requiereFianza ? 0
+      : mat && Number(anuncio.fianza) > 0 ? Math.round(Number(anuncio.fianza))
+        : Math.round(subtotal * FIANZA_PCT);
 
     if (!(total > 0)) {
       return new Response(JSON.stringify({ ok: false, error: "El importe de la reserva no es válido." }), { headers: CORS });

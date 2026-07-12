@@ -273,7 +273,9 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
   const servicio = servicioBase - ahorro;
   const total = subtotal + servicio;
   const requiereFianza = !exp && !patronActivo;
-  const fianza = requiereFianza ? Math.round(subtotal * FIANZA_PCT) : 0;
+  /* El material lleva la fianza fija que puso su dueño: el 20 % de un kayak a 15 €/día
+     serían 3 €, que no cubren reponerlo. Los barcos siguen con el porcentaje. */
+  const fianza = !requiereFianza ? 0 : mat && item.fianza > 0 ? Math.round(item.fianza) : Math.round(subtotal * FIANZA_PCT);
 
   const inicioISO = exp ? dtISO(fechaExp) : modo === "horas" ? dtISO(fechaHoras) : dtISO(inicio);
   const finISO = exp ? sumarHoras(inicioISO, parseDuracionHoras(item.duracion))
@@ -821,6 +823,9 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
                   {a.matricula && <span>Matrícula: <b>{a.matricula}</b></span>}
                   {a.poliza && <span>Seguro: <b>{a.poliza}</b></span>}
                   {a.caducidad_seguro && <span>Caducidad: <b>{new Date(a.caducidad_seguro).toLocaleDateString("es-ES")}</b></span>}
+                  {/* El material (SUP y kayak) no tiene seguro ni matrícula que revisar: lo que
+                      hay que mirar es que la fianza cubra reponerlo. */}
+                  {a.clase === "material" && <span>Fianza: <b>{a.fianza > 0 ? eur(a.fianza) : "sin fijar"}</b></span>}
                 </div>
                 {seguroCaducado && <p className="mini-nota mini-nota-error">⚠ El seguro de este anuncio ya ha caducado.</p>}
                 {a.documentos?.length > 0 && (
@@ -1305,6 +1310,7 @@ function Publicar({ usuario, onDone, onPublicado }) {
   const [matricula, setMatricula] = useState("");
   const [poliza, setPoliza] = useState("");
   const [caducidadSeguro, setCaducidadSeguro] = useState("");
+  const [fianzaMat, setFianzaMat] = useState("");
   const hoyISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [avisoHoras, setAvisoHoras] = useState("");
   const [equipoSel, setEquipoSel] = useState([]);
@@ -1332,7 +1338,12 @@ function Publicar({ usuario, onDone, onPublicado }) {
   const clientePaga = Math.round(precio * (1 + COMISION));
   const tuComision = clientePaga - precio;
   const seguroCaducado = caducidadSeguro && caducidadSeguro < hoyISO;
-  const faltaDocumentacion = !consiento || !poliza.trim() || !caducidadSeguro || seguroCaducado || (!esExp && !esMat && !matricula.trim());
+  /* Un kayak o una tabla de paddle surf no tienen seguro ni matrícula: no se les pide
+     documentación ninguna. A cambio, su dueño fija la fianza en euros — el 20 % de un
+     alquiler de 15 € serían 3 €, que no cubren perder el material. */
+  const faltaDocumentacion = esMat
+    ? !(+fianzaMat > 0)
+    : !consiento || !poliza.trim() || !caducidadSeguro || seguroCaducado || (!esExp && !matricula.trim());
 
   const publicar = () => {
     if (faltaDocumentacion) return;
@@ -1341,20 +1352,22 @@ function Publicar({ usuario, onDone, onPublicado }) {
       setErrorPublicar("");
       try {
         const urlsFotos = fotos.length ? await subirFotos(usuario.id, fotos) : [];
-        const rutasDocumentos = documentos.length ? await subirDocumentos(usuario.id, documentos) : [];
+        /* El material no tiene seguro ni matrícula: no se le sube documentación ninguna. */
+        const rutasDocumentos = !esMat && documentos.length ? await subirDocumentos(usuario.id, documentos) : [];
         const base = {
           clase, propietario_id: usuario.id,
           nombre: nombre.trim() || (esExp ? "Tu experiencia" : esMat ? "Tu material" : "Tu barco"),
           puerto: puerto.trim(), zona: zonaPub, descripcion: descripcion.trim(), fotos: urlsFotos,
-          poliza: poliza.trim(), caducidad_seguro: caducidadSeguro, documentos: rutasDocumentos, estado: "En revisión",
+          estado: "En revisión",
           aviso_minimo_horas: +avisoHoras > 0 ? +avisoHoras : null,
           equipamiento: [...equipoSel, ...equipoCustom],
         };
+        const conSeguro = { poliza: poliza.trim(), caducidad_seguro: caducidadSeguro, documentos: rutasDocumentos };
         const payload = esExp
-          ? { ...base, actividad: act, plazas: +plazas || null, duracion: duracion.trim(), persona: precio, anfitrion: usuario.nombre }
+          ? { ...base, ...conSeguro, actividad: act, plazas: +plazas || null, duracion: duracion.trim(), persona: precio, anfitrion: usuario.nombre }
           : esMat
-            ? { ...base, tipo: matTipo, hora: +horaPrecio || null, dia: precio }
-            : { ...base, tipo, eslora: +eslora || null, plazas: +plazas || null, potencia: +potencia || null, lista, patron, hora: +horaPrecio || null, dia: precio, matricula: matricula.trim() };
+            ? { ...base, tipo: matTipo, hora: +horaPrecio || null, dia: precio, fianza: +fianzaMat }
+            : { ...base, ...conSeguro, tipo, eslora: +eslora || null, plazas: +plazas || null, potencia: +potencia || null, lista, patron, hora: +horaPrecio || null, dia: precio, matricula: matricula.trim() };
         const creado = await crearAnuncio(payload);
         onPublicado(creado);
         setEnviado(true);
@@ -1446,30 +1459,43 @@ function Publicar({ usuario, onDone, onPublicado }) {
           </label>
           <p className="mini-nota">Déjalo en blanco para usar el mínimo estándar. Da igual lo que pongas: si un cliente reserva entre las 22:00 y las 8:00, nunca podrá empezar antes de pasado mañana — es una norma de seguridad de la plataforma que no se puede desactivar.</p>
 
-          <h3 className="serif bloque-tit">Documentación y verificación</h3>
-          {!esExp && !esMat && <label className="field"><span>Número de matrícula</span><input value={matricula} onChange={(e) => setMatricula(e.target.value)} placeholder="7ª-CS-1234-56" /></label>}
-          <Fila>
-            <label className="field"><span>Aseguradora y nº de póliza</span><input value={poliza} onChange={(e) => setPoliza(e.target.value)} placeholder="Mapfre 123456789" /></label>
-            <label className="field"><span>Caducidad del seguro</span><input type="date" min={hoyISO} value={caducidadSeguro} onChange={(e) => setCaducidadSeguro(e.target.value)} /></label>
-          </Fila>
-          {seguroCaducado && <p className="mini-nota mini-nota-error">Esa fecha ya ha pasado — necesitamos la caducidad de un seguro en vigor.</p>}
-          <input ref={documentosInputRef} type="file" accept="image/*,application/pdf" multiple hidden onChange={agregarDocumentos} />
-          <button type="button" className="fotos-drop" onClick={() => documentosInputRef.current?.click()}><Plus size={16} /> {documentos.length ? "Añadir más documentos" : "Adjuntar documentación (matrícula, póliza…)"}</button>
-          {documentos.length > 0 && (
-            <div className="equipo-chips">
-              {documentos.map((f, i) => (
-                <span key={`${f.name}-${i}`} className="equipo-chip"><FileText size={12} /> {f.name} <button type="button" onClick={() => quitarDocumento(i)}><X size={12} /></button></span>
-              ))}
-            </div>
+          {esMat ? (
+            <>
+              <h3 className="serif bloque-tit">Fianza</h3>
+              <label className="field">
+                <span>Fianza en euros</span>
+                <input type="number" min={0} value={fianzaMat} onChange={(e) => setFianzaMat(e.target.value)} placeholder="300" />
+              </label>
+              <p className="mini-nota">Se le retiene al cliente al reservar y se le devuelve cuando tú das el alquiler por terminado. Pon lo que te costaría reponer el material si te lo pierden o te lo rompen, no un porcentaje del alquiler.</p>
+            </>
+          ) : (
+            <>
+              <h3 className="serif bloque-tit">Documentación y verificación</h3>
+              {!esExp && <label className="field"><span>Número de matrícula</span><input value={matricula} onChange={(e) => setMatricula(e.target.value)} placeholder="7ª-CS-1234-56" /></label>}
+              <Fila>
+                <label className="field"><span>Aseguradora y nº de póliza</span><input value={poliza} onChange={(e) => setPoliza(e.target.value)} placeholder="Mapfre 123456789" /></label>
+                <label className="field"><span>Caducidad del seguro</span><input type="date" min={hoyISO} value={caducidadSeguro} onChange={(e) => setCaducidadSeguro(e.target.value)} /></label>
+              </Fila>
+              {seguroCaducado && <p className="mini-nota mini-nota-error">Esa fecha ya ha pasado — necesitamos la caducidad de un seguro en vigor.</p>}
+              <input ref={documentosInputRef} type="file" accept="image/*,application/pdf" multiple hidden onChange={agregarDocumentos} />
+              <button type="button" className="fotos-drop" onClick={() => documentosInputRef.current?.click()}><Plus size={16} /> {documentos.length ? "Añadir más documentos" : "Adjuntar documentación (matrícula, póliza…)"}</button>
+              {documentos.length > 0 && (
+                <div className="equipo-chips">
+                  {documentos.map((f, i) => (
+                    <span key={`${f.name}-${i}`} className="equipo-chip"><FileText size={12} /> {f.name} <button type="button" onClick={() => quitarDocumento(i)}><X size={12} /></button></span>
+                  ))}
+                </div>
+              )}
+              <p className="mini-nota">Un revisor de Yacht Today comprobará estos documentos antes de publicar el anuncio — no existe ningún registro público en España para verificarlos de forma automática.</p>
+              <ConsentimientoLegal checked={consiento} onChange={setConsiento} texto="la documentación de este anuncio (matrícula, póliza y certificados)" />
+            </>
           )}
-          <p className="mini-nota">Un revisor de Yacht Today comprobará estos documentos antes de publicar el anuncio — no existe ningún registro público en España para verificarlos de forma automática.</p>
-          <ConsentimientoLegal checked={consiento} onChange={setConsiento} texto="la documentación de este anuncio (matrícula, póliza y certificados)" />
 
           {errorPublicar && <p className="auth-error">{errorPublicar}</p>}
           <button className="btn-primario ancho" onClick={publicar} disabled={faltaDocumentacion || verificacion === "verificando" || enviando}>
             {verificacion === "verificando" || enviando ? "Enviando…" : "Publicar"}
           </button>
-          {faltaDocumentacion && <p className="mini-nota">Completa la documentación y acepta el tratamiento de datos para poder publicar.</p>}
+          {faltaDocumentacion && <p className="mini-nota">{esMat ? "Pon una fianza mayor que cero para poder publicar." : "Completa la documentación y acepta el tratamiento de datos para poder publicar."}</p>}
         </div>
         <aside className="ganancias">
           <span className="eyebrow claro">Con precio de {eur(precio)}/{uni}</span>

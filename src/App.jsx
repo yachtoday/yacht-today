@@ -774,7 +774,7 @@ function estadoFidelidad(count) {
 }
 
 /* ── Panel de usuario ────────────────────────────────────────────── */
-function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onSimularVistoBueno, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEliminarAnuncio }) {
+function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEliminarAnuncio }) {
   const esCliente = usuario.rol === "cliente" || usuario.rol === "ambas";
   const esProp = usuario.rol === "propietario" || usuario.rol === "ambas";
   const activas = reservas.filter((r) => r.estado !== "finalizada").slice().sort((a, b) => new Date(a.inicioISO) - new Date(b.inicioISO));
@@ -860,7 +860,7 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
                 : <div className="li-acciones"><button className="btn-sec sm" onClick={onExplorar}>Gestionar</button><button className="btn-cancelar sm" onClick={() => onCancelar(proxima)}>Cancelar</button></div>}
             </div></div>)
               : <Vacio txt="No tienes reservas activas." cta="Explorar" onCta={onExplorar} />}
-            {proxima && proxima.fianzaEstado && <FianzaEstado reserva={proxima} onSimularVistoBueno={onSimularVistoBueno} />}
+            {proxima && proxima.fianzaEstado && <FianzaEstado reserva={proxima} />}
           </section>
         )}
 
@@ -876,7 +876,7 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
                       : yaTermino ? <button className="btn-sec sm" onClick={() => onFinalizar(r)}>Marcar finalizada</button>
                         : <div className="li-acciones"><button className="btn-sec sm" onClick={onExplorar}>Repetir</button><button className="btn-cancelar sm" onClick={() => onCancelar(r)}>Cancelar</button></div>}
                   </div>
-                  {r.fianzaEstado && <FianzaEstado reserva={r} onSimularVistoBueno={onSimularVistoBueno} compacta />}
+                  {r.fianzaEstado && <FianzaEstado reserva={r} compacta />}
                   {r.resena && <p className="mini-nota">Tu reseña: {"★".repeat(r.resena.estrellas)}{"☆".repeat(5 - r.resena.estrellas)} {r.resena.comentario && `· "${r.resena.comentario}"`}</p>}
                 </li>
               );
@@ -969,14 +969,13 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
 }
 const Vacio = ({ txt, cta, onCta, primario }) => (<div className="mini-vacio"><p>{txt}</p><button className={primario ? "btn-primario auto" : "btn-sec"} onClick={onCta}>{cta}</button></div>);
 
-function FianzaEstado({ reserva, onSimularVistoBueno, compacta }) {
+function FianzaEstado({ reserva, compacta }) {
   if (reserva.fianzaEstado === "liberada") {
     return <div className={`fianza-estado ok ${compacta ? "compacta" : ""}`}><span><ShieldCheck size={14} /> Fianza de {eur(reserva.fianza)} liberada</span></div>;
   }
   return (
     <div className={`fianza-estado ${compacta ? "compacta" : ""}`}>
-      <span><ShieldCheck size={14} /> Fianza de {eur(reserva.fianza)} retenida · fotos de entrega disponibles próximamente</span>
-      <button className="link-inline" onClick={() => onSimularVistoBueno(reserva.id)}>Simular visto bueno del propietario (demo) →</button>
+      <span><ShieldCheck size={14} /> Fianza de {eur(reserva.fianza)} retenida · se te devolverá cuando el propietario dé por finalizado el alquiler</span>
     </div>
   );
 }
@@ -1444,27 +1443,6 @@ function useVerificacionAutomatica() {
   return { estado, iniciar };
 }
 
-/* Genera 1-2 reservas de mentira sobre un anuncio recién publicado, para poder
-   probar el programa "Cuida tu Barco" sin tener clientes reales todavía. */
-const CLIENTES_FAKE = ["Marta G.", "Javier R.", "Laura P.", "Diego M.", "Sara L."];
-function generarReservasFake(barco) {
-  const precio = barco.dia || 100;
-  const crear = (diasInicio, diasFin) => {
-    const ini = new Date(); ini.setDate(ini.getDate() + diasInicio); ini.setHours(10, 0, 0, 0);
-    const fin = new Date(); fin.setDate(fin.getDate() + diasFin); fin.setHours(19, 0, 0, 0);
-    const subtotal = precio * Math.max(1, diasFin - diasInicio);
-    const servicio = Math.round(subtotal * COMISION);
-    const fianza = Math.round(subtotal * FIANZA_PCT);
-    return {
-      id: Date.now() + Math.round(Math.random() * 100000), barcoId: barco.id, barco: barco.nombre, zona: barco.zona,
-      cliente: CLIENTES_FAKE[Math.floor(Math.random() * CLIENTES_FAKE.length)],
-      subtotal, servicio, total: subtotal + servicio, fianza, fianzaEstado: "retenida",
-      inicioISO: ini.toISOString(), finISO: fin.toISOString(), estado: "confirmada",
-    };
-  };
-  return [crear(-9, -7), crear(6, 8)];
-}
-
 /* ── App ─────────────────────────────────────────────────────────── */
 export default function App() {
   const [vista, setVista] = useState("home");
@@ -1479,9 +1457,7 @@ export default function App() {
   const [auth, setAuth] = useState(null);
   const [reservas, setReservas] = useState([]);
   const [misBarcos, setMisBarcos] = useState([]);
-  const [reservasRecibidasFake, setReservasRecibidasFake] = useState([]);
-  const [reservasRecibidasReales, setReservasRecibidasReales] = useState([]);
-  const reservasRecibidas = useMemo(() => [...reservasRecibidasReales, ...reservasRecibidasFake], [reservasRecibidasReales, reservasRecibidasFake]);
+  const [reservasRecibidas, setReservasRecibidas] = useState([]);
   const [favoritos, setFavoritos] = useState([]);
   const [cancelando, setCancelando] = useState(null);
   const [especificando, setEspecificando] = useState(null);
@@ -1512,7 +1488,7 @@ export default function App() {
     if (!usuario) return;
     listarMisAnuncios(usuario.id).then(setMisBarcos).catch(console.error);
     listarMisReservas(usuario.id).then(setReservas).catch(console.error);
-    listarReservasRecibidas(usuario.id).then(setReservasRecibidasReales).catch(console.error);
+    listarReservasRecibidas(usuario.id).then(setReservasRecibidas).catch(console.error);
   }, [usuario?.id]);
 
   useEffect(() => {
@@ -1574,7 +1550,7 @@ export default function App() {
   const abrir = (x) => { setItem(x); setVista("ficha"); setMenu(false); window.scrollTo(0, 0); };
   const abrirAuth = (tab = "entrar", rolPre = null, pendiente = null) => { setAuth({ tab, rolPre, pendiente }); setMenu(false); };
   const completarAuth = () => { const p = auth?.pendiente; setAuth(null); if (p === "publicar") { setVista("publicar"); window.scrollTo(0, 0); } else if (p !== "reservar") { setVista("panel"); window.scrollTo(0, 0); } };
-  const cerrarSesion = async () => { await supabase.auth.signOut(); setReservas([]); setMisBarcos([]); setReservasRecibidasFake([]); setReservasRecibidasReales([]); setFavoritos([]); setAvisosPropietario(0); ir("home"); };
+  const cerrarSesion = async () => { await supabase.auth.signOut(); setReservas([]); setMisBarcos([]); setReservasRecibidas([]); setFavoritos([]); setAvisosPropietario(0); ir("home"); };
   const irPublicar = () => (usuario ? ir("publicar") : abrirAuth("registro", "propietario", "publicar"));
   const setClaseReset = (c) => { setClase(c); setTipo(null); };
   const abrirCategoria = (c) => { setClase(c.clase); setTipo(c.key); setSoloPatron(false); ir("explorar"); };
@@ -1585,19 +1561,13 @@ export default function App() {
     setCancelando(null);
   };
   const finalizarReservaRecibida = (id) => {
-    const aplicar = (p) => {
+    setReservasRecibidas((p) => {
       const r = p.find((x) => x.id === id);
       if (!r) return p;
       const fianzaEstado = r.fianzaEstado ? "liberada" : r.fianzaEstado;
       actualizarReserva(id, { estado: "finalizada", ...(fianzaEstado ? { fianza_estado: fianzaEstado } : {}) }).catch(console.error);
       return p.map((x) => (x.id === id ? { ...x, estado: "finalizada", fianzaEstado } : x));
-    };
-    setReservasRecibidasReales(aplicar);
-    setReservasRecibidasFake(aplicar);
-  };
-  const simularVistoBueno = (id) => {
-    actualizarReserva(id, { fianza_estado: "liberada" }).catch(console.error);
-    setReservas((p) => p.map((r) => (r.id === id ? { ...r, fianzaEstado: "liberada" } : r)));
+    });
   };
   const guardarEspecificaciones = (id, motorModelo, motorNotas) => setMisBarcos((p) => p.map((b) => (b.id === id ? { ...b, motorModelo, motorNotas } : b)));
   const guardarResena = (estrellas, comentario) => {
@@ -1607,8 +1577,7 @@ export default function App() {
   };
   const confirmarCancelacionPropietario = (justificado) => {
     actualizarReserva(cancelandoProp.id, { estado: "cancelada" }).catch(console.error);
-    setReservasRecibidasReales((p) => p.filter((r) => r.id !== cancelandoProp.id));
-    setReservasRecibidasFake((p) => p.filter((r) => r.id !== cancelandoProp.id));
+    setReservasRecibidas((p) => p.filter((r) => r.id !== cancelandoProp.id));
     if (!justificado) setAvisosPropietario((p) => p + 1);
     setCancelandoProp(null);
   };
@@ -1683,10 +1652,22 @@ export default function App() {
             <div className="cat-grid">{CATEGORIAS.map((c) => (<button key={c.t} className="cat" style={{ backgroundImage: `linear-gradient(180deg, rgba(15,39,50,.15) 0%, rgba(15,39,50,.55) 65%, rgba(15,39,50,.88) 100%), url(${CATEGORIA_FOTOS[c.t]})` }} onClick={() => abrirCategoria(c)}><span className="cat-ico"><c.icon size={20} /></span><span className="cat-t">{c.t}</span><span className="cat-d">{c.d}</span></button>))}</div>
           </section>
 
-          <section className="seccion">
-            <div className="sec-head"><h2 className="serif">Destacados esta semana</h2><button className="link-mas" onClick={() => { setClaseReset("todo"); ir("explorar"); }}>Ver todo →</button></div>
-            <div className="grid">{anuncios.slice(0, 4).map((b) => <Tarjeta key={b.id} item={b} onOpen={abrir} />)}</div>
-          </section>
+          {anuncios.length > 0 ? (
+            <section className="seccion">
+              <div className="sec-head"><h2 className="serif">Destacados esta semana</h2><button className="link-mas" onClick={() => { setClaseReset("todo"); ir("explorar"); }}>Ver todo →</button></div>
+              <div className="grid">{anuncios.slice(0, 4).map((b) => <Tarjeta key={b.id} item={b} onOpen={abrir} />)}</div>
+            </section>
+          ) : !cargandoAnuncios && (
+            <section className="seccion">
+              <div className="arranque">
+                <span className="eyebrow">Acabamos de zarpar</span>
+                <h2 className="serif">Sé el primero en publicar tu barco</h2>
+                <p>Yacht Today acaba de abrir y todavía no hay nada publicado. Si tienes un barco, una tabla de paddle surf o quieres llevar a gente a pescar, ahora mismo tendrías tu zona entera para ti.</p>
+                <button className="btn-primario auto" onClick={irPublicar}>Publica lo tuyo</button>
+                <p className="arranque-nota">Publicar es gratis y recibes tu tarifa íntegra: la comisión del {Math.round(COMISION * 100)} % la paga quien alquila.</p>
+              </div>
+            </section>
+          )}
 
           <section className="banner-ventajas" onClick={() => ir("ventajas")}>
             <div><span className="eyebrow claro">Novedad · Programa de recompensas</span><h2 className="serif">Cuanto más navegas, más ganas</h2><p>Niveles, insignias y kits de mantenimiento para propietarios. Algo que ninguna otra plataforma te da.</p></div>
@@ -1711,7 +1692,7 @@ export default function App() {
 
       {vista === "explorar" && (
         <section className="explorar">
-          <div className="explorar-head"><h1 className="serif">{cargandoAnuncios ? "Cargando…" : `${filtrados.length} resultados${zona !== "Todas" ? ` en ${zona}` : " en toda España"}`}</h1><p className="sub">Cancela sin recargo hasta 48 h antes · anfitriones verificados</p></div>
+          <div className="explorar-head"><h1 className="serif">{cargandoAnuncios ? "Cargando…" : !anuncios.length ? "Aún no hay nada publicado" : `${filtrados.length} resultados${zona !== "Todas" ? ` en ${zona}` : " en toda España"}`}</h1><p className="sub">Cancela sin recargo hasta 48 h antes · anfitriones verificados</p></div>
           <div className="buscador-rapido"><Search size={16} /><input type="text" placeholder="Busca por nombre, puerto o zona…" value={q} onChange={(e) => setQ(e.target.value)} />{q && <button className="brapido-x" onClick={() => setQ("")}><X size={14} /></button>}</div>
           <div className="clase-seg">{CLASES.map((c) => <button key={c.v} className={clase === c.v ? "cs on" : "cs"} onClick={() => setClaseReset(c.v)}>{c.t}</button>)}</div>
           {subChips && (
@@ -1727,7 +1708,8 @@ export default function App() {
           <div className="filtros-fila"><select value={zona} onChange={(e) => setZona(e.target.value)}>{ZONAS.map((z) => <option key={z}>{z === "Todas" ? "Toda España" : z}</option>)}</select>{(clase === "todo" || clase === "barco") && <label className="check"><input type="checkbox" checked={soloPatron} onChange={(e) => setSoloPatron(e.target.checked)} /> Con patrón</label>}</div>
           {cargandoAnuncios ? <div className="vacio"><Sailboat size={30} /><p>Cargando anuncios…</p></div>
             : filtrados.length ? <div className="grid">{filtrados.map((b) => <Tarjeta key={b.id} item={b} onOpen={abrir} />)}</div>
-              : <div className="vacio"><Sailboat size={30} /><p>No hay resultados con esos filtros.</p><button className="btn-sec" onClick={quitarFiltros}>Quitar filtros</button></div>}
+              : anuncios.length ? <div className="vacio"><Sailboat size={30} /><p>No hay resultados con esos filtros.</p><button className="btn-sec" onClick={quitarFiltros}>Quitar filtros</button></div>
+                : <div className="vacio"><Sailboat size={30} /><p>Todavía no hay nada publicado en Yacht Today. Acabamos de abrir.</p><button className="btn-primario auto" onClick={irPublicar}>Sé el primero en publicar</button></div>}
         </section>
       )}
 
@@ -1735,8 +1717,8 @@ export default function App() {
       {vista === "ventajas" && <Ventajas onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onMantenimiento={() => ir("mantenimiento")} />}
       {vista === "mantenimiento" && <SpenMechanics />}
       {(vista === "contacto" || vista === "faq" || vista === "cancelaciones") && <Ayuda seccion={vista} onCambiar={ir} usuario={usuario} onIrPanel={() => ir("panel")} onAbrirAuth={abrirAuth} />}
-      {vista === "publicar" && usuario && <Publicar usuario={usuario} onDone={() => ir("panel")} onPublicado={(b) => { setMisBarcos((p) => [b, ...p]); setReservasRecibidasFake((p) => [...generarReservasFake(b), ...p]); }} />}
-      {vista === "panel" && usuario && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={(a) => revisarAnuncio(a, "Rechazado")} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onSimularVistoBueno={simularVistoBueno} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEliminarAnuncio={setEliminandoAnuncio} />)}
+      {vista === "publicar" && usuario && <Publicar usuario={usuario} onDone={() => ir("panel")} onPublicado={(b) => setMisBarcos((p) => [b, ...p])} />}
+      {vista === "panel" && usuario && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={(a) => revisarAnuncio(a, "Rechazado")} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEliminarAnuncio={setEliminandoAnuncio} />)}
 
       {auth && <AuthModal tab={auth.tab} rolPre={auth.rolPre} onClose={() => setAuth(null)} onCambiarTab={(t) => setAuth((a) => ({ ...a, tab: t }))} onAuth={completarAuth} />}
       {cancelando && <CancelarModal reserva={cancelando} onClose={() => setCancelando(null)} onConfirmar={confirmarCancelacion} />}
@@ -1884,6 +1866,11 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .filtros-fila select{padding:9px 13px;border:1px solid var(--linea);border-radius:10px;background:var(--blanco)}
 .check{display:flex;align-items:center;gap:7px;font-size:13.5px;color:var(--slate)}
 .vacio{text-align:center;padding:60px 20px;color:var(--muted)}.vacio svg{color:var(--mar);margin-bottom:12px}.vacio p{margin-bottom:16px}
+
+.arranque{text-align:center;max-width:620px;margin:0 auto;padding:clamp(30px,5vw,52px) 24px;background:var(--blanco);border:1px solid var(--linea);border-radius:18px}
+.arranque h2{font-size:clamp(24px,3.4vw,32px);margin:10px 0 12px}
+.arranque p{color:var(--slate);margin-bottom:22px}
+.arranque-nota{font-size:13px;color:var(--muted);margin:16px 0 0}
 
 .ficha{max-width:1140px;margin:0 auto;padding:22px clamp(16px,4vw,52px) 64px}
 .volver{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-weight:500;margin-bottom:14px}.volver:hover{color:var(--tinta)}

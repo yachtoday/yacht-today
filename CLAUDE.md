@@ -79,11 +79,13 @@ propietarios con personas que quieren disfrutar del mar. Lema: "Alquila el mar".
    añadir los suyos propios en texto libre; se guarda en la columna `equipamiento`
    (`text[]`) de `anuncios`. Los anuncios de ejemplo sin este campo siguen mostrando un
    listado por defecto (fallback), no se rompen.
-9. ✅ **Publicidad de Spen Mechanics S.L.** (empresa personal de mantenimiento náutico de
-   Eric): página propia (`vista === "mantenimiento"`, componente `SpenMechanics` en
-   `src/App.jsx`) con enlaces reales a `www.spenmechanics.com`. Colocada de forma
-   visible en **Ventajas** y en **Mi panel** del propietario (no solo en el pie de
-   página, a propósito — es donde de verdad se ve).
+9. ✅ **Publicidad de Spen Mechanics S.L.** (empresa personal de Eric): página propia
+   (`vista === "mantenimiento"`, componente `SpenMechanics` en `src/App.jsx`) con enlaces
+   reales a `www.spenmechanics.com`. Colocada de forma visible en **Ventajas** y en **Mi
+   panel** del propietario (no solo en el pie de página, a propósito — es donde de verdad
+   se ve). **Ojo:** Spen Mechanics **todavía no se dedica a la náutica** (se dedica a otra
+   cosa); Eric quiere llevarla hasta ahí, y Yacht Today es parte de ese plan. O sea que
+   **no es una fuente de propietarios ya hechos**: hoy no hay clientes náuticos que captar.
 10. ✅ **Documentación real de propietarios**: no existe una API pública en España para
     verificar matrículas, licencias o seguros contra un registro oficial (por eso
     `useVerificacionAutomatica` sigue siendo un paso simulado — solo bloquea el doble
@@ -148,6 +150,24 @@ diferencia de cualquier usuario real de la app).
   `estado` de un anuncio) solo puedan hacerlas las Edge Functions o el admin, nunca el
   navegador directamente — verificado con pruebas reales (`curl` sin sesión intentando
   insertar una reserva "pagada": rechazado por RLS; ver también el trigger de arriba).
+
+## Nada falso en producción (2026-07-12)
+Al abrir la web al público se quitaron tres cosas que eran de mentira y que en un sitio
+real dejaban de ser inocentes:
+- **Botón "Simular visto bueno del propietario (demo)"**: lo veía **el cliente** en su
+  reserva y **liberaba su propia fianza** de verdad en la base de datos, sin que el
+  propietario aprobase nada. La fianza ahora solo se libera por la vía legítima, cuando el
+  propietario da la reserva por finalizada (`finalizarReservaRecibida`).
+- **`generarReservasFake`**: al publicar un anuncio se fabricaban 1-2 reservas de clientes
+  inventados. Además de ser mentira, contaban para "Cuida tu Barco", así que un propietario
+  podía reclamar kits reales por alquileres que nunca existieron. Eliminado: `reservasRecibidas`
+  ya solo tiene filas reales de Supabase.
+- **Los 20 anuncios de ejemplo** (los que no tienen `propietario_id`): `supabase/borrar-anuncios-ejemplo.sql`.
+  No se podían pagar (`crear-pago` rechaza los anuncios sin propietario), pero eran barcos
+  que no existen. **Decisión consciente: no se sustituyen por anuncios falsos "bonitos".**
+  Con la web vacía, la portada y "Explorar" muestran una invitación honesta a los
+  propietarios (bloque `.arranque`) en vez de un catálogo desierto o un "no hay resultados
+  con esos filtros" que echaba la culpa a los filtros.
 
 ## Correo entrante: `soporte@yachtoday.com` y cualquier otra dirección
 Resend **envía** pero no recibe, así que el correo entrante lo hace **ImprovMX** (plan

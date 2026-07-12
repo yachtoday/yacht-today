@@ -200,12 +200,22 @@ function Silueta({ v }) {
     return (<svg viewBox="0 0 120 80" width="116" height="76" aria-hidden="true"><path d="M18 44 Q60 30 102 44 Q60 58 18 44 Z" fill={c} /><ellipse cx="60" cy="44" rx="8" ry="5" fill="rgba(15,39,50,.5)" /><path d="M40 30 L80 58 M80 30 L40 58" stroke={b} strokeWidth="3" strokeLinecap="round" /></svg>);
   return (<svg viewBox="0 0 120 80" width="116" height="76" aria-hidden="true"><path d="M28 34 L92 34 L86 46 L34 46 Z" fill={b} /><path d="M16 48 L104 48 L94 62 Q60 68 26 62 Z" fill={c} /></svg>);
 }
-function Foto({ item, alto = 200, tag = true }) {
+/* `entera`: muestra la foto completa en vez de recortarla al hueco. Se usa en la ficha,
+   porque la mayoría de las fotos las hace la gente con el móvil en vertical (la primera
+   real medía 965x2048) y recortarlas dejaba fuera casi todo. Detrás se pone la misma foto
+   ampliada y desenfocada, para rellenar los lados sin bandas negras. En las tarjetas del
+   listado sí se recorta: todas deben medir lo mismo o la rejilla se descuadra. */
+function Foto({ item, alto = 200, tag = true, entera = false }) {
   const h = item.hue;
   const foto = item.fotos?.[0];
   return (
     <div className="foto" style={{ height: alto, background: foto ? "#0F2732" : `linear-gradient(165deg, hsl(${h} 38% 34%), hsl(${h + 12} 45% 18%))` }}>
-      {foto ? <img className="foto-img" src={foto} alt={item.nombre} loading="lazy" /> : (<><div className="foto-sol" /><Silueta v={visualDe(item)} /></>)}
+      {foto ? (
+        <>
+          {entera && <div className="foto-fondo" style={{ backgroundImage: `url(${foto})` }} />}
+          <img className={entera ? "foto-img entera" : "foto-img"} src={foto} alt={item.nombre} loading="lazy" />
+        </>
+      ) : (<><div className="foto-sol" /><Silueta v={visualDe(item)} /></>)}
       {tag && <span className="foto-tag">{etiqueta(item)}</span>}
     </div>
   );
@@ -273,6 +283,9 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
   const servicio = servicioBase - ahorro;
   const total = subtotal + servicio;
   const requiereFianza = !exp && !patronActivo;
+  /* Un kayak o una tabla de paddle surf NO necesitan licencia de navegación (la propia
+     tarjeta pone "sin licencia"): pedírsela dejaba el material imposible de alquilar. */
+  const requiereLicencia = requiereFianza && !mat;
   /* El material lleva la fianza fija que puso su dueño: el 20 % de un kayak a 15 €/día
      serían 3 €, que no cubren reponerlo. Los barcos siguen con el porcentaje. */
   const fianza = !requiereFianza ? 0 : mat && item.fianza > 0 ? Math.round(item.fianza) : Math.round(subtotal * FIANZA_PCT);
@@ -300,7 +313,7 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
     const avisoInvalidoAhora = ((new Date(inicioISO).getTime() - ahoraCheck.getTime()) < avisoMinHoras * 3600000)
       || (esDeNoche(ahoraCheck) && inicioISO.slice(0, 10) < addDiasISO(hoy, 2));
     if (avisoInvalidoAhora) return;
-    if (requiereFianza && verifLicencia !== "verificado") return;
+    if (requiereLicencia && verifLicencia !== "verificado") return;
     setEnviandoReserva(true);
     setErrorReserva("");
     try {
@@ -343,11 +356,11 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
       </div>
       <p className="ficha-sub"><span className="rating"><Star size={13} fill="currentColor" /> {item.rating.toFixed(1)}</span> · {item.reviews} reseñas · {exp
         ? <span className="verif-inline"><BadgeCheck size={14} /> Con {item.anfitrion} · {item.duracion}</span>
-        : <span className="verif-inline"><BadgeCheck size={14} /> {mat ? "Material verificado" : "Anfitrión verificado"}</span>}</p>
+        : <span className="verif-inline"><BadgeCheck size={14} /> {mat ? "Revisado por Yacht Today" : "Anfitrión verificado"}</span>}</p>
 
       <div className="ficha-grid">
         <div>
-          <Foto item={item} alto={360} tag={false} />
+          <Foto item={item} alto={440} tag={false} entera />
           {/* Solo fotos de verdad. Antes se pintaban siempre 4 huecos con etiquetas
               inventadas ("Camarote", "Detalle"…) y, si no había foto, salía un rectángulo
               azul con el texto encima: parecía que la web estaba rota. */}
@@ -453,18 +466,21 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
                 </div>
               )}
 
-              {requiereFianza && usuario && (
+              {requiereLicencia && usuario && (
                 <div className="fianza-box licencia-box">
-                  <span className="fianza-tit"><BadgeCheck size={15} /> Verificación de licencia de navegación</span>
+                  <span className="fianza-tit"><BadgeCheck size={15} /> Licencia de navegación</span>
                   {verifLicencia === "verificado" ? (
-                    <p className="verif-ok"><Check size={14} /> Licencia verificada automáticamente</p>
+                    /* No existe ningún registro público en España para comprobar una licencia
+                       de forma automática, así que no se le dice al cliente que se ha hecho:
+                       el número queda registrado y quien lo comprueba es el propietario. */
+                    <p className="verif-ok"><Check size={14} /> Licencia registrada · el propietario la comprobará en la entrega</p>
                   ) : (
                     <>
                       <label className="field"><span>Nº de licencia de navegación</span><input value={licencia} onChange={(e) => setLicencia(e.target.value)} placeholder="PER-2024-000000" /></label>
                       <div className="fotos-drop sm"><Plus size={14} /> Adjuntar foto de la licencia (próximamente)</div>
                       <ConsentimientoLegal checked={consientoLicencia} onChange={setConsientoLicencia} texto="tu licencia de navegación" />
                       <button type="button" className="btn-sec ancho sm" disabled={!licencia.trim() || !consientoLicencia || verifLicencia === "verificando"} onClick={() => iniciarVerifLicencia()}>
-                        {verifLicencia === "verificando" ? "Verificando automáticamente…" : "Verificar licencia"}
+                        {verifLicencia === "verificando" ? "Registrando…" : "Registrar licencia"}
                       </button>
                     </>
                   )}
@@ -472,7 +488,7 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
               )}
 
               {errorReserva && <p className="auth-error">{errorReserva}</p>}
-              <button className="btn-primario" onClick={reservar} disabled={enviandoReserva || (!!usuario && (fechaInvalida || avisoInvalido || (requiereFianza && verifLicencia !== "verificado")))}>{!usuario ? "Entra para reservar" : enviandoReserva ? "Redirigiendo a pago…" : exp ? `Reservar ${personas > 1 ? "plazas" : "plaza"}` : mat ? "Alquilar" : "Reservar ahora"}</button>
+              <button className="btn-primario" onClick={reservar} disabled={enviandoReserva || (!!usuario && (fechaInvalida || avisoInvalido || (requiereLicencia && verifLicencia !== "verificado")))}>{!usuario ? "Entra para reservar" : enviandoReserva ? "Redirigiendo a pago…" : exp ? `Reservar ${personas > 1 ? "plazas" : "plaza"}` : mat ? "Alquilar" : "Reservar ahora"}</button>
               <p className="nota"><Info size={12} /> Pago seguro con tarjeta, PayPal, Apple Pay o Google Pay · Cancela sin recargo hasta 48 h antes</p>
             </>
         </aside>
@@ -751,7 +767,7 @@ const FAQ = [
     { p: "¿Qué documentación necesito?", r: "Matrícula, lista (6ª o 7ª) y póliza de seguro en vigor con su fecha de caducidad. La verificamos automáticamente al publicar, y un revisor de Yacht Today da el visto bueno final." },
   ]},
   { cat: "Seguridad y documentación", preguntas: [
-    { p: "¿Están verificados los propietarios?", r: "Sí: revisamos matrícula, lista y seguro antes de publicar cualquier anuncio, y distinguimos con «Propietario Premium» a quienes mantienen mejor valoración y disponibilidad." },
+    { p: "¿Están verificados los propietarios?", r: "Revisamos a mano cada anuncio antes de publicarlo. En barcos y experiencias pedimos matrícula, lista y seguro. El material sin motor (paddle surf y kayak) no lleva matrícula ni seguro obligatorio: ahí lo que revisamos es el anuncio y la fianza. Distinguimos con «Propietario Premium» a quienes mantienen mejor valoración y disponibilidad." },
     { p: "¿Qué pasa con mis datos?", r: "Tratamos tu documentación exclusivamente para verificar la reserva o el anuncio, conforme al RGPD. No se cede a terceros salvo obligación legal, y puedes pedir su supresión escribiendo a soporte@yachtoday.com." },
   ]},
   { cat: "Programa de recompensas", preguntas: [
@@ -1917,7 +1933,13 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .card{display:block;text-align:left;background:var(--blanco);border:1px solid var(--linea);border-radius:20px;overflow:hidden;width:100%;transition:transform .18s,box-shadow .18s}
 .card:hover{transform:translateY(-4px);box-shadow:0 24px 46px -24px rgba(22,50,63,.45)}
 .foto{position:relative;display:grid;place-items:center;overflow:hidden}
-.foto-img{width:100%;height:100%;object-fit:cover}
+/* Anclada con position:absolute a propósito: .foto es una rejilla con place-items:center,
+   y ahí un height:100% se calcula contra el contenido de la propia imagen, no contra el
+   alto del hueco — una foto de móvil de 965x2048 se dibujaba a 728px de alto dentro de un
+   hueco de 200 y se veía una franja cualquiera. */
+.foto-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.foto-img.entera{object-fit:contain}
+.foto-fondo{position:absolute;inset:0;background-size:cover;background-position:center;filter:blur(26px) brightness(.55);transform:scale(1.15)}
 .foto-sol{position:absolute;top:16px;right:22px;width:46px;height:46px;border-radius:50%;background:radial-gradient(circle,rgba(246,217,140,.9),rgba(235,183,101,0) 70%)}
 .foto-tag{position:absolute;left:12px;bottom:12px;background:rgba(15,39,50,.6);color:var(--arena);font-size:11px;padding:4px 11px;border-radius:999px;backdrop-filter:blur(4px)}
 .card-body{padding:16px 17px}

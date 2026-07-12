@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabaseClient";
 import { listarAnunciosPublicados, listarMisAnuncios, crearAnuncio, actualizarAnuncio, borrarArchivosDeAnuncio, notificarAnuncio, subirFotos, subirDocumentos, urlFirmadaDocumento, eliminarAnuncio, listarAnunciosEnRevision, cambiarEstadoAnuncio } from "./lib/anuncios";
 import { listarMisReservas, listarReservasRecibidas, actualizarReserva } from "./lib/reservas";
+import { listarFavoritos, anadirFavorito, quitarFavorito } from "./lib/favoritos";
 import { iniciarPago, conectarCobros, cobrarFianza } from "./lib/pagos";
 import {
   Anchor, Search, MapPin, Users, Star, Ship, Waves, ChevronRight, Check,
@@ -170,6 +171,18 @@ const ZONAS = ["Todas", "Baleares", "Costa Brava", "C. Valenciana", "Costa Blanc
 
 // Equipamiento y servicios: lista de opciones típicas que el propietario puede
 // marcar al publicar, además de añadir las suyas propias por texto libre.
+/* Cada anuncio tiene su propia dirección: /barco/211-quicksilver-675-open. El id es lo
+   único que se lee al volver; el texto de detrás está solo para que la URL se entienda y
+   para que Google sepa de qué va. */
+const RUTA_ANUNCIO = /^\/(barco|experiencia|material)\/(\d+)/;
+const aSlug = (s) => String(s || "")
+  .toLowerCase()
+  .normalize("NFD").replace(/[̀-ͯ]/g, "") // fuera acentos: "Bavaria Crucero" → "bavaria-crucero"
+  .replace(/[^a-z0-9]+/g, "-")
+  .replace(/^-|-$/g, "")
+  .slice(0, 60);
+const rutaDeAnuncio = (b) => `/${b.clase}/${b.id}${b.nombre ? "-" + aSlug(b.nombre) : ""}`;
+
 const EQUIPAMIENTO_TIPICO = {
   barco: ["Chalecos salvavidas", "Nevera a bordo", "Equipo de fondeo", "Ducha de popa", "Combustible incluido", "Equipo de snorkel", "Toallas", "Altavoz Bluetooth"],
   experiencia: ["Anfitrión / monitor", "Equipo necesario", "Seguro a bordo", "Briefing de seguridad", "Avituallamiento", "Fotos del día", "Transporte desde el puerto"],
@@ -221,6 +234,31 @@ function Foto({ item, alto = 200, tag = true, entera = false }) {
   );
 }
 const Chip = ({ icon: Icon, children }) => (<span className="chip"><Icon size={13} strokeWidth={2} /> {children}</span>);
+
+/* El botón "Compartir" no hacía nada: no tenía onClick, y aunque lo hubiera tenido no había
+   nada que compartir porque los anuncios no tenían dirección propia. En el móvil abre el
+   menú de compartir del sistema (WhatsApp, etc.); en el ordenador, que no lo tiene, copia
+   el enlace al portapapeles y lo dice. */
+function Compartir({ item }) {
+  const [copiado, setCopiado] = useState(false);
+  const compartir = async () => {
+    const url = window.location.origin + rutaDeAnuncio(item);
+    const datos = { title: `${item.nombre} · Yacht Today`, text: `${item.nombre} en ${item.puerto}`, url };
+    try {
+      if (navigator.share) { await navigator.share(datos); return; }
+      await navigator.clipboard.writeText(url);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2200);
+    } catch {
+      // El usuario cerró el menú de compartir, o el navegador no deja copiar: no es un error.
+    }
+  };
+  return (
+    <button className="acc" onClick={compartir}>
+      {copiado ? <><Check size={15} /> Enlace copiado</> : <><Share2 size={15} /> Compartir</>}
+    </button>
+  );
+}
 
 function Tarjeta({ item, onOpen }) {
   return (
@@ -351,7 +389,7 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
         <h1 className="serif ficha-titulo">{item.nombre}</h1>
         <div className="ficha-acciones">
           <button className={`acc ${esFavorito ? "on" : ""}`} onClick={() => onToggleFav(item)}><Heart size={15} fill={esFavorito ? "currentColor" : "none"} /> Guardar</button>
-          <button className="acc"><Share2 size={15} /> Compartir</button>
+          <Compartir item={item} />
         </div>
       </div>
       <p className="ficha-sub"><span className="rating"><Star size={13} fill="currentColor" /> {item.rating.toFixed(1)}</span> · {item.reviews} reseñas · {exp
@@ -878,7 +916,7 @@ function estadoFidelidad(count) {
 }
 
 /* ── Panel de usuario ────────────────────────────────────────────── */
-function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onReclamarFianza, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEditarAnuncio, onEliminarAnuncio }) {
+function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onReclamarFianza, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEditarAnuncio, onEliminarAnuncio, onAdmin }) {
   const esCliente = usuario.rol === "cliente" || usuario.rol === "ambas";
   const esProp = usuario.rol === "propietario" || usuario.rol === "ambas";
   const activas = reservas.filter((r) => r.estado !== "finalizada").slice().sort((a, b) => new Date(a.inicioISO) - new Date(b.inicioISO));
@@ -907,40 +945,11 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
         <div className="panel-cab"><h1 className="serif">{saludo()}, {usuario.nombre.split(" ")[0]} 👋</h1><button className="btn-primario auto" onClick={onExplorar}><Plus size={16} /> Nueva reserva</button></div>
 
         {esAdmin && (
-          <section className="panel-sec">
-            <h2 className="serif sec-t"><ShieldCheck size={18} /> Anuncios pendientes de revisión</h2>
-            {anunciosRevision.length ? (<ul className="lista">{anunciosRevision.map((a) => {
-              const seguroCaducado = a.caducidad_seguro && a.caducidad_seguro < new Date().toISOString().slice(0, 10);
-              return (
-              <li key={a.id} className="lista-item lista-item-col">
-                <div className="li-fila">
-                  <div><p className="li-nombre">{a.nombre}</p><p className="li-sub">{a.clase} · {a.puerto}</p></div>
-                  <div className="li-acciones">
-                    <button className="btn-sec sm" onClick={() => onRechazarAnuncio(a)}>Rechazar</button>
-                    <button className="btn-primario sm" onClick={() => onAprobarAnuncio(a)}>Aprobar</button>
-                  </div>
-                </div>
-                <div className="li-doc">
-                  {a.matricula && <span>Matrícula: <b>{a.matricula}</b></span>}
-                  {a.poliza && <span>Seguro: <b>{a.poliza}</b></span>}
-                  {a.caducidad_seguro && <span>Caducidad: <b>{new Date(a.caducidad_seguro).toLocaleDateString("es-ES")}</b></span>}
-                  {/* El material (SUP y kayak) no tiene seguro ni matrícula que revisar: lo que
-                      hay que mirar es que la fianza cubra reponerlo. */}
-                  {a.clase === "material" && <span>Fianza: <b>{a.fianza > 0 ? eur(a.fianza) : "sin fijar"}</b></span>}
-                </div>
-                {seguroCaducado && <p className="mini-nota mini-nota-error">⚠ El seguro de este anuncio ya ha caducado.</p>}
-                {a.documentos?.length > 0 && (
-                  <div className="li-doc-btns">
-                    {a.documentos.map((ruta, i) => (
-                      <button key={ruta} type="button" className="btn-sec sm" onClick={() => onVerDocumento(ruta)}><FileText size={13} /> Ver documento {i + 1}</button>
-                    ))}
-                  </div>
-                )}
-              </li>
-              );
-            })}</ul>)
-              : <p className="mini-nota">No hay anuncios esperando revisión.</p>}
-          </section>
+          <button className="admin-acceso" onClick={onAdmin}>
+            <ShieldCheck size={17} />
+            <span>Panel de administración{anunciosRevision.length > 0 ? ` · ${anunciosRevision.length} por revisar` : ""}</span>
+            <ChevronRight size={16} />
+          </button>
         )}
 
         {esCliente && (
@@ -1097,6 +1106,72 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
   );
 }
 const Vacio = ({ txt, cta, onCta, primario }) => (<div className="mini-vacio"><p>{txt}</p><button className={primario ? "btn-primario auto" : "btn-sec"} onClick={onCta}>{cta}</button></div>);
+
+/* ── Panel de administración (solo ADMIN_EMAIL) ───────────────────────
+   La cola de revisión estaba metida dentro de "Mi panel", entre las reservas y los
+   favoritos de Eric — mezclando su cuenta de cliente con su trabajo de revisor. Aquí tiene
+   su sitio propio, y a la vista lo único que de verdad importa: qué está esperando y desde
+   cuándo, porque un propietario que espera dos días se va. */
+function PanelAdmin({ anunciosRevision, anuncios, onAprobar, onRechazar, onVerDocumento, onVolver }) {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const diasEsperando = (a) => Math.floor((Date.now() - new Date(a.created_at).getTime()) / 86400000);
+
+  return (
+    <div className="admin">
+      <button className="volver" onClick={onVolver}><ArrowLeft size={17} /> Volver a mi panel</button>
+      <div className="ficha-head">
+        <h1 className="serif ficha-titulo">Administración</h1>
+      </div>
+      <p className="ficha-sub">Cuenta de revisor · {ADMIN_EMAIL}</p>
+
+      <div className="admin-cifras">
+        <div className="admin-cifra"><span className="admin-num">{anunciosRevision.length}</span><span className="admin-lab">esperando revisión</span></div>
+        <div className="admin-cifra"><span className="admin-num">{anuncios.length}</span><span className="admin-lab">publicados en la web</span></div>
+      </div>
+
+      <h2 className="serif bloque-tit">Anuncios pendientes de revisión</h2>
+      {anunciosRevision.length ? (
+        <ul className="lista">{anunciosRevision.map((a) => {
+          const seguroCaducado = a.caducidad_seguro && a.caducidad_seguro < hoy;
+          const dias = diasEsperando(a);
+          return (
+            <li key={a.id} className="lista-item lista-item-col">
+              <div className="li-fila">
+                <div>
+                  <p className="li-nombre">{a.nombre}</p>
+                  <p className="li-sub">{a.clase} · {a.puerto} · {dias === 0 ? "hoy" : dias === 1 ? "hace 1 día" : `hace ${dias} días`}</p>
+                </div>
+                <div className="li-acciones">
+                  <button className="btn-sec sm" onClick={() => onRechazar(a)}>Rechazar</button>
+                  <button className="btn-primario sm" onClick={() => onAprobar(a)}>Aprobar</button>
+                </div>
+              </div>
+              <div className="li-doc">
+                {a.matricula && <span>Matrícula: <b>{a.matricula}</b></span>}
+                {a.poliza && <span>Seguro: <b>{a.poliza}</b></span>}
+                {a.caducidad_seguro && <span>Caducidad: <b>{new Date(a.caducidad_seguro).toLocaleDateString("es-ES")}</b></span>}
+                {/* El material (SUP y kayak) no tiene seguro ni matrícula que revisar: lo que
+                    hay que mirar es que la fianza cubra reponerlo. */}
+                {a.clase === "material" && <span>Fianza: <b>{a.fianza > 0 ? eur(a.fianza) : "sin fijar"}</b></span>}
+              </div>
+              {dias >= 2 && <p className="mini-nota mini-nota-error">Lleva {dias} días esperando. Un propietario sin respuesta se va.</p>}
+              {seguroCaducado && <p className="mini-nota mini-nota-error">⚠ El seguro de este anuncio ya ha caducado.</p>}
+              {a.documentos?.length > 0 && (
+                <div className="li-doc-btns">
+                  {a.documentos.map((ruta, i) => (
+                    <button key={ruta} type="button" className="btn-sec sm" onClick={() => onVerDocumento(ruta)}><FileText size={13} /> Ver documento {i + 1}</button>
+                  ))}
+                </div>
+              )}
+            </li>
+          );
+        })}</ul>
+      ) : (
+        <div className="vacio"><ShieldCheck size={30} /><p>No hay nada esperando. Todo al día.</p></div>
+      )}
+    </div>
+  );
+}
 
 function FianzaEstado({ reserva, compacta }) {
   if (reserva.fianzaEstado === "liberada") {
@@ -1828,11 +1903,39 @@ export default function App() {
     if (window.location.pathname.replace(/\/$/, "") === "/propietarios") setVista("propietarios");
   }, []);
 
+  /* Alguien abre un enlace compartido (/barco/211-...): hay que esperar a que carguen los
+     anuncios para saber a cuál corresponde. Si el anuncio ya no existe o dejó de estar
+     publicado, se queda en la portada en vez de enseñar una pantalla rota. */
+  useEffect(() => {
+    if (cargandoAnuncios) return;
+    const m = window.location.pathname.match(RUTA_ANUNCIO);
+    if (!m) return;
+    const encontrado = anuncios.find((a) => String(a.id) === m[2]);
+    if (encontrado) { setItem(encontrado); setVista("ficha"); }
+    else window.history.replaceState(null, "", "/");
+  }, [cargandoAnuncios, anuncios]);
+
+  /* El botón "atrás" del navegador: sin esto, quien llega por un enlace compartido y le da
+     a atrás no sale de la ficha. */
+  useEffect(() => {
+    const alVolver = () => {
+      const m = window.location.pathname.match(RUTA_ANUNCIO);
+      if (m) {
+        const encontrado = anuncios.find((a) => String(a.id) === m[2]);
+        if (encontrado) { setItem(encontrado); setVista("ficha"); return; }
+      }
+      setVista(window.location.pathname.replace(/\/$/, "") === "/propietarios" ? "propietarios" : "home");
+    };
+    window.addEventListener("popstate", alVolver);
+    return () => window.removeEventListener("popstate", alVolver);
+  }, [anuncios]);
+
   useEffect(() => {
     if (!usuario) return;
     listarMisAnuncios(usuario.id).then(setMisBarcos).catch(console.error);
     listarMisReservas(usuario.id).then(setReservas).catch(console.error);
     listarReservasRecibidas(usuario.id).then(setReservasRecibidas).catch(console.error);
+    listarFavoritos(usuario.id).then(setFavoritos).catch(console.error);
   }, [usuario?.id]);
 
   useEffect(() => {
@@ -1892,15 +1995,45 @@ export default function App() {
     }
   };
 
-  const ir = (v) => { setVista(v); setMenu(false); window.scrollTo(0, 0); };
-  const abrir = (x) => { setItem(x); setVista("ficha"); setMenu(false); window.scrollTo(0, 0); };
+  const ir = (v) => {
+    setVista(v);
+    setMenu(false);
+    window.scrollTo(0, 0);
+    // Al salir de una ficha, la dirección vuelve a la raíz: si no, quedaría un /barco/211
+    // en la barra que ya no corresponde a lo que se está viendo.
+    const rutaActual = window.location.pathname;
+    if (RUTA_ANUNCIO.test(rutaActual) && v !== "ficha") {
+      window.history.pushState(null, "", v === "propietarios" ? "/propietarios" : "/");
+    }
+  };
+  const abrir = (x) => {
+    setItem(x);
+    setVista("ficha");
+    setMenu(false);
+    window.scrollTo(0, 0);
+    // Cada anuncio tiene ahora su propia dirección. Sin esto no había NADA que compartir
+    // (el botón "Compartir" era decorativo) ni nada que Google pudiera indexar.
+    window.history.pushState(null, "", rutaDeAnuncio(x));
+  };
   const abrirAuth = (tab = "entrar", rolPre = null, pendiente = null) => { setAuth({ tab, rolPre, pendiente }); setMenu(false); };
   const completarAuth = () => { const p = auth?.pendiente; setAuth(null); if (p === "publicar") { setVista("publicar"); window.scrollTo(0, 0); } else if (p !== "reservar") { setVista("panel"); window.scrollTo(0, 0); } };
   const cerrarSesion = async () => { await supabase.auth.signOut(); setReservas([]); setMisBarcos([]); setReservasRecibidas([]); setFavoritos([]); setAvisosPropietario(0); ir("home"); };
   const irPublicar = () => (usuario ? ir("publicar") : abrirAuth("registro", "propietario", "publicar"));
   const setClaseReset = (c) => { setClase(c); setTipo(null); };
   const abrirCategoria = (c) => { setClase(c.clase); setTipo(c.key); setSoloPatron(false); ir("explorar"); };
-  const toggleFav = (b) => setFavoritos((p) => (p.find((x) => x.id === b.id) ? p.filter((x) => x.id !== b.id) : [b, ...p]));
+  /* Sin cuenta no se puede guardar: antes el corazón se pintaba igual y no guardaba nada,
+     así que el usuario creía que lo tenía guardado y al recargar había desaparecido. */
+  const toggleFav = (b) => {
+    if (!usuario) { abrirAuth("registro", "cliente"); return; }
+    const yaEsta = favoritos.some((x) => x.id === b.id);
+    setFavoritos((p) => (yaEsta ? p.filter((x) => x.id !== b.id) : [b, ...p]));
+    const guardar = yaEsta ? quitarFavorito(usuario.id, b.id) : anadirFavorito(usuario.id, b.id);
+    guardar.catch((err) => {
+      console.error("No se ha podido guardar el favorito:", err);
+      // Si el servidor lo rechaza, se deshace en pantalla: no le mentimos al usuario.
+      setFavoritos((p) => (yaEsta ? [b, ...p] : p.filter((x) => x.id !== b.id)));
+    });
+  };
   const confirmarCancelacion = () => {
     actualizarReserva(cancelando.id, { estado: "cancelada" }).catch(console.error);
     setReservas((p) => p.filter((r) => r.id !== cancelando.id));
@@ -2087,7 +2220,17 @@ export default function App() {
           }}
         />
       )}
-      {vista === "panel" && usuario && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={setRechazandoAnuncio} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEditarAnuncio={(b) => { setEditandoAnuncio(b); ir("editar"); }} onEliminarAnuncio={setEliminandoAnuncio} />)}
+      {vista === "panel" && usuario && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={setRechazandoAnuncio} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEditarAnuncio={(b) => { setEditandoAnuncio(b); ir("editar"); }} onEliminarAnuncio={setEliminandoAnuncio} onAdmin={() => ir("admin")} />)}
+      {vista === "admin" && usuario && esAdmin && (
+        <PanelAdmin
+          anunciosRevision={anunciosRevision}
+          anuncios={anuncios}
+          onAprobar={(a) => revisarAnuncio(a, "Publicado")}
+          onRechazar={setRechazandoAnuncio}
+          onVerDocumento={verDocumento}
+          onVolver={() => ir("panel")}
+        />
+      )}
 
       {auth && <AuthModal tab={auth.tab} rolPre={auth.rolPre} onClose={() => setAuth(null)} onCambiarTab={(t) => setAuth((a) => ({ ...a, tab: t }))} onAuth={completarAuth} />}
       {cancelando && <CancelarModal reserva={cancelando} onClose={() => setCancelando(null)} onConfirmar={confirmarCancelacion} />}
@@ -2243,6 +2386,14 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .filtros-fila select{padding:9px 13px;border:1px solid var(--linea);border-radius:10px;background:var(--blanco)}
 .check{display:flex;align-items:center;gap:7px;font-size:13.5px;color:var(--slate)}
 .vacio{text-align:center;padding:60px 20px;color:var(--muted)}.vacio svg{color:var(--mar);margin-bottom:12px}.vacio p{margin-bottom:16px}
+
+.admin{max-width:960px;margin:0 auto;padding:22px clamp(16px,4vw,52px) 64px}
+.admin-acceso{display:flex;align-items:center;gap:10px;width:100%;padding:16px 20px;margin-bottom:20px;background:var(--noche);color:var(--arena);border:none;border-radius:14px;font-family:inherit;font-size:14.5px;font-weight:600;cursor:pointer;text-align:left}
+.admin-acceso svg:last-child{margin-left:auto}
+.admin-cifras{display:flex;gap:14px;margin:20px 0 8px;flex-wrap:wrap}
+.admin-cifra{flex:1;min-width:150px;background:var(--blanco);border:1px solid var(--linea);border-radius:14px;padding:18px 20px}
+.admin-num{display:block;font-family:'Newsreader',Georgia,serif;font-size:30px;font-weight:600;color:var(--noche);line-height:1.1}
+.admin-lab{display:block;margin-top:3px;font-size:13px;color:var(--muted)}
 
 .honesto{max-width:760px;margin:0 auto;padding:clamp(26px,4vw,40px);background:var(--blanco);border:1px solid var(--linea);border-left:4px solid var(--mar);border-radius:14px}
 .honesto h2{font-size:clamp(21px,2.8vw,27px);margin:8px 0 14px}

@@ -1,15 +1,12 @@
 // Yacht Today · avisos por correo del proceso de revisión de anuncios.
 //
-// Antes, publicar un anuncio no avisaba a nadie: se quedaba "En revisión" y solo se veía
-// si el admin entraba al panel y se acordaba de mirar. Un propietario podía tirarse días
-// esperando sin saber si esto iba en serio.
-//
 //   tipo "nuevo"     → avisa al ADMIN de que hay algo que revisar.
 //   tipo "aprobado"  → avisa al PROPIETARIO de que su anuncio ya se ve.
 //   tipo "rechazado" → avisa al PROPIETARIO, con el motivo, y le dice cómo corregirlo.
 //
 // El email del propietario se busca con el service role (nunca viaja al navegador).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { correo, tabla, enviar, type Fila } from "../_shared/email.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -19,15 +16,10 @@ const CORS = {
 
 const ADMIN_EMAIL = "yachtoday@gmail.com";
 const WEB = "https://yachtoday.com";
+const DE = "Yacht Today <anuncios@yachtoday.com>";
 
-const enviar = async (to: string, subject: string, html: string) => {
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${Deno.env.get("RESEND_API_KEY")}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: "Yacht Today <anuncios@yachtoday.com>", to, subject, html }),
-  });
-  if (!res.ok) throw new Error(await res.text());
-};
+const escapar = (s: string) =>
+  String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
@@ -45,19 +37,29 @@ Deno.serve(async (req) => {
     }
 
     const clase = anuncio.clase === "barco" ? "Barco" : anuncio.clase === "experiencia" ? "Experiencia" : "Material";
-    const titulo = `${anuncio.nombre} · ${clase} en ${anuncio.puerto}`;
 
     if (tipo === "nuevo") {
+      const filas: Fila[] = [
+        { k: "Qué", v: `${escapar(anuncio.nombre)} · ${clase}` },
+        { k: "Dónde", v: escapar(anuncio.puerto) },
+      ];
+      if (anuncio.matricula) filas.push({ k: "Matrícula", v: escapar(anuncio.matricula) });
+      if (anuncio.poliza) filas.push({ k: "Seguro", v: escapar(anuncio.poliza) });
+      if (anuncio.caducidad_seguro) filas.push({ k: "Caducidad del seguro", v: new Date(anuncio.caducidad_seguro).toLocaleDateString("es-ES") });
+      if (anuncio.clase === "material") filas.push({ k: "Fianza", v: `${Math.round(Number(anuncio.fianza))} €`, fuerte: true });
+      filas.push({ k: "Documentos adjuntos", v: String((anuncio.documentos || []).length) });
+
       await enviar(
         ADMIN_EMAIL,
-        `Nuevo anuncio pendiente de revisión: ${anuncio.nombre}`,
-        `<h2>Hay un anuncio esperando tu revisión</h2>
-         <p><strong>${titulo}</strong></p>
-         ${anuncio.matricula ? `<p>Matrícula: <strong>${anuncio.matricula}</strong></p>` : ""}
-         ${anuncio.poliza ? `<p>Seguro: <strong>${anuncio.poliza}</strong></p>` : ""}
-         ${anuncio.caducidad_seguro ? `<p>Caducidad del seguro: <strong>${anuncio.caducidad_seguro}</strong></p>` : ""}
-         ${anuncio.clase === "material" ? `<p>Fianza: <strong>${anuncio.fianza} €</strong></p>` : ""}
-         <p>Entra en <a href="${WEB}">Mi panel</a> para ver la documentación y aprobarlo o rechazarlo.</p>`,
+        `Anuncio pendiente de revisión: ${anuncio.nombre}`,
+        correo({
+          titulo: "Tienes un anuncio esperando",
+          intro: "Alguien ha publicado y no se verá en la web hasta que lo revises.",
+          cuerpo: tabla(filas),
+          cta: { texto: "Revisarlo ahora", url: WEB },
+          nota: "Los documentos se abren desde tu panel, no se envían por correo.",
+        }),
+        DE,
       );
       return new Response(JSON.stringify({ ok: true }), { headers: CORS });
     }
@@ -75,21 +77,31 @@ Deno.serve(async (req) => {
     if (tipo === "aprobado") {
       await enviar(
         email,
-        `Tu anuncio ya está publicado: ${anuncio.nombre}`,
-        `<h2>¡Tu anuncio ya se ve en Yacht Today!</h2>
-         <p><strong>${titulo}</strong> ha pasado la revisión y cualquiera puede reservarlo desde ya.</p>
-         <p>Te avisaremos por correo en cuanto recibas tu primera reserva.</p>
-         <p><a href="${WEB}">Ver Yacht Today</a></p>`,
+        `Ya está publicado: ${anuncio.nombre}`,
+        correo({
+          titulo: "Tu anuncio ya se ve en Yacht Today",
+          intro: `<strong>${escapar(anuncio.nombre)}</strong> ha pasado la revisión. Desde ahora cualquiera puede reservarlo.`,
+          cuerpo: tabla([
+            { k: "Qué", v: `${escapar(anuncio.nombre)} · ${clase}` },
+            { k: "Dónde", v: escapar(anuncio.puerto) },
+          ]),
+          cta: { texto: "Ver tu anuncio", url: WEB },
+          nota: "Te avisaremos por correo en cuanto recibas tu primera reserva. Recuerda que cobras tu tarifa íntegra: la comisión la paga quien alquila.",
+        }),
+        DE,
       );
     } else if (tipo === "rechazado") {
       await enviar(
         email,
         `Tu anuncio necesita un cambio: ${anuncio.nombre}`,
-        `<h2>No hemos podido publicar tu anuncio todavía</h2>
-         <p><strong>${titulo}</strong></p>
-         <p><strong>Qué hay que corregir:</strong><br>${(anuncio.motivo_rechazo || "No se ha indicado el motivo.").replace(/\n/g, "<br>")}</p>
-         <p>No hace falta que lo publiques otra vez: entra en <a href="${WEB}">Mis anuncios</a>, pulsa <strong>Editar</strong>, corrígelo y vuelve a enviarlo a revisión.</p>
-         <p>Si crees que es un error, contesta a este correo o escríbenos a soporte@yachtoday.com.</p>`,
+        correo({
+          titulo: "Todavía no hemos podido publicarlo",
+          intro: `Hemos revisado <strong>${escapar(anuncio.nombre)}</strong> y hay algo que corregir antes de que se vea en la web.`,
+          aviso: escapar(anuncio.motivo_rechazo || "No se ha indicado el motivo.").replace(/\n/g, "<br>"),
+          cta: { texto: "Corregirlo", url: WEB },
+          nota: "No hace falta que lo publiques otra vez: entra en «Mis anuncios», pulsa «Editar», corrígelo y volverá solo a la cola de revisión. Si crees que es un error, escríbenos a soporte@yachtoday.com.",
+        }),
+        DE,
       );
     } else {
       return new Response(JSON.stringify({ ok: false, error: "Tipo de aviso desconocido." }), { headers: CORS });

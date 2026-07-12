@@ -1,11 +1,14 @@
 // Yacht Today · avisa por email al propietario cuando recibe una reserva nueva.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { correo, tabla, enviar } from "../_shared/email.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Content-Type": "application/json",
 };
+
+const eur = (n: number) => `${Math.round(Number(n))} €`;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -27,26 +30,22 @@ Deno.serve(async (req) => {
 
     const fecha = new Date(inicioISO).toLocaleString("es-ES", { dateStyle: "long", timeStyle: "short" });
 
-    const resendRes = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${Deno.env.get("RESEND_API_KEY")}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: "Yacht Today <reservas@yachtoday.com>",
-        to: data.user.email,
-        subject: `Nueva reserva: ${anuncioNombre}`,
-        html: `
-          <h2>Tienes una reserva nueva</h2>
-          <p><strong>${clienteNombre}</strong> ha reservado <strong>${anuncioNombre}</strong> (${puerto}).</p>
-          <p><strong>Cuándo:</strong> ${fecha} · ${detalle}</p>
-          <p><strong>Total:</strong> ${total} €</p>
-          <p>Entra en <a href="https://yachtoday.com">Yacht Today</a> para ver todos los detalles en tu panel.</p>
-        `,
-      }),
+    const html = correo({
+      titulo: "Tienes una reserva nueva",
+      intro: `<strong>${clienteNombre}</strong> ha reservado <strong>${anuncioNombre}</strong> y ya ha pagado. No tienes que hacer nada para confirmarla.`,
+      cuerpo: tabla([
+        { k: "Qué", v: anuncioNombre },
+        { k: "Dónde", v: puerto },
+        { k: "Cuándo", v: fecha },
+        { k: "Duración", v: detalle },
+        { k: "Cliente", v: clienteNombre },
+        { k: "Total pagado", v: eur(total), fuerte: true },
+      ]),
+      cta: { texto: "Ver la reserva", url: "https://yachtoday.com" },
+      nota: "El dinero llega a tu cuenta de Stripe. Cuando termine el alquiler, entra en tu panel y dale el visto bueno para cerrarlo.",
     });
 
-    if (!resendRes.ok) {
-      return new Response(JSON.stringify({ ok: false, error: await resendRes.text() }), { headers: CORS });
-    }
+    await enviar(data.user.email, `Nueva reserva: ${anuncioNombre}`, html, "Yacht Today <reservas@yachtoday.com>");
     return new Response(JSON.stringify({ ok: true }), { headers: CORS });
   } catch (err) {
     return new Response(JSON.stringify({ ok: false, error: String(err) }), { headers: CORS });

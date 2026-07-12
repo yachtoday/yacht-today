@@ -112,6 +112,11 @@ Deno.serve(async (req) => {
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: user.email,
+      /* La fianza NO se cobra ni se bloquea: se guarda la tarjeta del cliente (Stripe le
+         pide su consentimiento en el propio checkout) para poder cobrársela solo si el
+         propietario reporta daños al finalizar. Sin `customer_creation` no hay a quién
+         adjuntar la tarjeta y no se podría cobrar nada después. */
+      customer_creation: requiereFianza ? "always" : undefined,
       line_items: [{
         price_data: {
           currency: "eur",
@@ -123,6 +128,7 @@ Deno.serve(async (req) => {
       payment_intent_data: {
         application_fee_amount: Math.round(servicio * 100),
         transfer_data: { destination: stripeAccountId },
+        ...(requiereFianza ? { setup_future_usage: "off_session" } : {}),
       },
       metadata: {
         anuncioId: String(anuncioId),
@@ -137,7 +143,9 @@ Deno.serve(async (req) => {
         servicio: String(servicio),
         total: String(total),
         fianza: String(fianza),
-        fianzaEstado: requiereFianza ? "retenida" : "",
+        /* "garantizada": hay tarjeta guardada y no se ha cobrado nada. No decimos
+           "retenida" porque no se retiene dinero — eso era justo la mentira. */
+        fianzaEstado: requiereFianza ? "garantizada" : "",
         licenciaVerificada: String(requiereFianza),
         inicioISO,
         finISO,

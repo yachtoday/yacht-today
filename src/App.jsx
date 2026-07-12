@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabaseClient";
 import { listarAnunciosPublicados, listarMisAnuncios, crearAnuncio, subirFotos, subirDocumentos, urlFirmadaDocumento, eliminarAnuncio, listarAnunciosEnRevision, cambiarEstadoAnuncio } from "./lib/anuncios";
 import { listarMisReservas, listarReservasRecibidas, actualizarReserva } from "./lib/reservas";
-import { iniciarPago, conectarCobros } from "./lib/pagos";
+import { iniciarPago, conectarCobros, cobrarFianza } from "./lib/pagos";
 import {
   Anchor, Search, MapPin, Users, Star, Ship, Waves, ChevronRight, Check,
   Plus, ArrowLeft, Ruler, Gauge, ShieldCheck, Menu, X, Sailboat, Info,
@@ -461,8 +461,8 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
 
               {requiereFianza && (
                 <div className="fianza-box">
-                  <span className="fianza-tit"><ShieldCheck size={15} /> Fianza de {eur(fianza)}</span>
-                  <p>Como {mat ? "el material" : "el barco"} se alquila sin patrón, se retiene esta fianza aparte del pago. Se te devuelve en cuanto el propietario revise la entrega y dé su visto bueno.</p>
+                  <span className="fianza-tit"><ShieldCheck size={15} /> Fianza de {eur(fianza)} · no se te cobra ahora</span>
+                  <p>Como {mat ? "el material" : "el barco"} se alquila sin patrón, hay una fianza de {eur(fianza)}. <b>No se te cobra ni se te bloquea en la tarjeta.</b> Solo se te cobraría si el propietario reporta daños o pérdida al terminar el alquiler. Al pagar, guardamos tu tarjeta únicamente para eso.</p>
                 </div>
               )}
 
@@ -621,6 +621,49 @@ function CancelarModal({ reserva, onClose, onConfirmar }) {
         </div>
         <button className="btn-primario ancho" onClick={onClose}>Volver, no cancelar</button>
         <button className="btn-cancelar ancho" onClick={onConfirmar}>{exento ? "Sí, cancelar (sin penalización)" : "Sí, cancelar de todas formas"}</button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Modal reclamar la fianza ─────────────────────────────────────────
+   La fianza no está retenida en ningún sitio: es la tarjeta que el cliente guardó al
+   pagar. Cobrarla es un cargo real a una persona, así que se le exige al propietario que
+   explique el daño (queda en la descripción del cargo, que el cliente ve en su banco) y
+   se le avisa de que esto no se puede deshacer desde la app. */
+function ReclamarFianzaModal({ reserva, onClose, onConfirmar }) {
+  const [motivo, setMotivo] = useState("");
+  const [cobrando, setCobrando] = useState(false);
+  const [error, setError] = useState("");
+
+  const confirmar = async () => {
+    setCobrando(true);
+    setError("");
+    try {
+      await onConfirmar(reserva.id, motivo.trim());
+    } catch (err) {
+      setError(err.message || "No se ha podido cobrar la fianza.");
+      setCobrando(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <button className="modal-x" onClick={onClose}><X size={20} /></button>
+        <div className="aviso-icon"><ShieldCheck size={26} /></div>
+        <h2 className="serif modal-tit">Cobrar la fianza de {eur(reserva.fianza)}</h2>
+        <p className="modal-sub">Vas a hacerle un cargo real de {eur(reserva.fianza)} a la tarjeta de {reserva.cliente}. El dinero te llega íntegro: Yacht Today no cobra comisión por un daño.</p>
+        <p className="aviso-fuerte">Hazlo solo si de verdad ha habido daños o pérdida. El cliente verá el motivo que escribas en el cargo de su banco, y podrá reclamarlo.</p>
+        <label className="field">
+          <span>¿Qué ha pasado?</span>
+          <textarea rows={3} value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Devolvió el kayak con la quilla rajada y sin el remo." />
+        </label>
+        {error && <p className="auth-error">{error}</p>}
+        <button className="btn-primario ancho" onClick={onClose}>Volver, no cobrar</button>
+        <button className="btn-cancelar ancho" disabled={!motivo.trim() || cobrando} onClick={confirmar}>
+          {cobrando ? "Cobrando…" : `Sí, cobrar ${eur(reserva.fianza)}`}
+        </button>
       </div>
     </div>
   );
@@ -795,7 +838,7 @@ function estadoFidelidad(count) {
 }
 
 /* ── Panel de usuario ────────────────────────────────────────────── */
-function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEliminarAnuncio }) {
+function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onReclamarFianza, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEliminarAnuncio }) {
   const esCliente = usuario.rol === "cliente" || usuario.rol === "ambas";
   const esProp = usuario.rol === "propietario" || usuario.rol === "ambas";
   const activas = reservas.filter((r) => r.estado !== "finalizada").slice().sort((a, b) => new Date(a.inicioISO) - new Date(b.inicioISO));
@@ -978,10 +1021,24 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
                   <div className="li-fila">
                     <div><p className="li-nombre">{r.barco}</p><p className="li-sub">{r.cliente} · {eur(r.total)}</p></div>
                     {r.estado === "finalizada" ? <span className="estado confirmada">Finalizada</span>
-                      : yaTermino ? <button className="btn-sec sm" onClick={() => onFinalizarRecibida(r.id)}>Dar visto bueno y finalizar</button>
+                      : yaTermino ? (
+                        <div className="li-acciones">
+                          {r.fianzaEstado && r.fianzaEstado !== "liberada" && r.fianzaEstado !== "cobrada" && (
+                            <button className="btn-cancelar sm" onClick={() => onReclamarFianza(r)}>Hubo daños</button>
+                          )}
+                          <button className="btn-sec sm" onClick={() => onFinalizarRecibida(r.id)}>Dar visto bueno y finalizar</button>
+                        </div>
+                      )
                         : <div className="li-acciones"><span className="estado revision">Próxima</span><button className="btn-cancelar sm" onClick={() => onCancelarRecibida(r)}>Cancelar</button></div>}
                   </div>
-                  {r.fianzaEstado && <span className="fianza-badge">Fianza: {eur(r.fianza)} {r.fianzaEstado === "liberada" ? "liberada ✓" : "retenida"}</span>}
+                  {r.fianzaEstado && (
+                    <span className="fianza-badge">
+                      Fianza: {eur(r.fianza)}{" "}
+                      {r.fianzaEstado === "liberada" ? "· no se cobró ✓"
+                        : r.fianzaEstado === "cobrada" ? "· cobrada al cliente ✓"
+                          : "· garantizada con su tarjeta"}
+                    </span>
+                  )}
                 </li>
               );
             })}</ul>
@@ -995,11 +1052,14 @@ const Vacio = ({ txt, cta, onCta, primario }) => (<div className="mini-vacio"><p
 
 function FianzaEstado({ reserva, compacta }) {
   if (reserva.fianzaEstado === "liberada") {
-    return <div className={`fianza-estado ok ${compacta ? "compacta" : ""}`}><span><ShieldCheck size={14} /> Fianza de {eur(reserva.fianza)} liberada</span></div>;
+    return <div className={`fianza-estado ok ${compacta ? "compacta" : ""}`}><span><ShieldCheck size={14} /> Fianza de {eur(reserva.fianza)}: no se te ha cobrado nada</span></div>;
+  }
+  if (reserva.fianzaEstado === "cobrada") {
+    return <div className={`fianza-estado ${compacta ? "compacta" : ""}`}><span><ShieldCheck size={14} /> El propietario ha reportado daños y se te ha cobrado la fianza de {eur(reserva.fianza)}</span></div>;
   }
   return (
     <div className={`fianza-estado ${compacta ? "compacta" : ""}`}>
-      <span><ShieldCheck size={14} /> Fianza de {eur(reserva.fianza)} retenida · se te devolverá cuando el propietario dé por finalizado el alquiler</span>
+      <span><ShieldCheck size={14} /> Fianza de {eur(reserva.fianza)} · no se te ha cobrado. Solo se te cobraría si el propietario reporta daños al terminar.</span>
     </div>
   );
 }
@@ -1093,7 +1153,7 @@ function Propietarios({ onPublicar, onVentajas }) {
         <div className="ref-grid">
           <div className="ref"><Wallet size={20} /><b>Cobras tu tarifa íntegra</b><p>La comisión del {Math.round(COMISION * 100)} % la paga quien alquila, no tú. Si pones 200 € al día, recibes 200 € al día.</p></div>
           <div className="ref"><CreditCard size={20} /><b>Te pagan por adelantado</b><p>El cliente paga con tarjeta al reservar y el dinero llega a tu cuenta. Se acabó cobrar en mano y que te dejen plantado.</p></div>
-          <div className="ref"><ShieldCheck size={20} /><b>Fianza retenida</b><p>Se le retiene una fianza al cliente y solo la recupera cuando eres tú quien da el alquiler por terminado. Si te devuelven el barco mal, no te lo comes tú.</p></div>
+          <div className="ref"><ShieldCheck size={20} /><b>Fianza que sí puedes cobrar</b><p>Guardamos la tarjeta de quien alquila. Si te lo devuelven roto o no te lo devuelven, lo dices al finalizar y le cobramos la fianza a su tarjeta: el dinero te llega íntegro. No te lo comes tú.</p></div>
           <div className="ref"><FileText size={20} /><b>Sabes a quién se lo dejas</b><p>Pedimos licencia y documentación. Y tú decides con cuánta antelación mínima quieren reservarte: nadie te va a coger el barco para dentro de una hora.</p></div>
         </div>
       </section>
@@ -1587,6 +1647,7 @@ export default function App() {
   const [cancelando, setCancelando] = useState(null);
   const [especificando, setEspecificando] = useState(null);
   const [cancelandoProp, setCancelandoProp] = useState(null);
+  const [reclamandoFianza, setReclamandoFianza] = useState(null);
   const [avisosPropietario, setAvisosPropietario] = useState(0);
   const [resenando, setResenando] = useState(null);
   const [eliminandoAnuncio, setEliminandoAnuncio] = useState(null);
@@ -1695,10 +1756,17 @@ export default function App() {
     setReservasRecibidas((p) => {
       const r = p.find((x) => x.id === id);
       if (!r) return p;
-      const fianzaEstado = r.fianzaEstado ? "liberada" : r.fianzaEstado;
+      /* "liberada" aquí significa "no se le cobra la fianza al cliente". Si ya se le cobró
+         por daños, no se pisa ese estado. */
+      const fianzaEstado = r.fianzaEstado && r.fianzaEstado !== "cobrada" ? "liberada" : r.fianzaEstado;
       actualizarReserva(id, { estado: "finalizada", ...(fianzaEstado ? { fianza_estado: fianzaEstado } : {}) }).catch(console.error);
       return p.map((x) => (x.id === id ? { ...x, estado: "finalizada", fianzaEstado } : x));
     });
+  };
+  const confirmarReclamarFianza = async (reservaId, motivo) => {
+    await cobrarFianza(reservaId, motivo);
+    setReservasRecibidas((p) => p.map((r) => (r.id === reservaId ? { ...r, fianzaEstado: "cobrada" } : r)));
+    setReclamandoFianza(null);
   };
   const guardarEspecificaciones = (id, motorModelo, motorNotas) => setMisBarcos((p) => p.map((b) => (b.id === id ? { ...b, motorModelo, motorNotas } : b)));
   const guardarResena = (estrellas, comentario) => {
@@ -1850,12 +1918,13 @@ export default function App() {
       {vista === "mantenimiento" && <SpenMechanics />}
       {(vista === "contacto" || vista === "faq" || vista === "cancelaciones") && <Ayuda seccion={vista} onCambiar={ir} usuario={usuario} onIrPanel={() => ir("panel")} onAbrirAuth={abrirAuth} />}
       {vista === "publicar" && usuario && <Publicar usuario={usuario} onDone={() => ir("panel")} onPublicado={(b) => setMisBarcos((p) => [b, ...p])} />}
-      {vista === "panel" && usuario && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={(a) => revisarAnuncio(a, "Rechazado")} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEliminarAnuncio={setEliminandoAnuncio} />)}
+      {vista === "panel" && usuario && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={(a) => revisarAnuncio(a, "Rechazado")} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEliminarAnuncio={setEliminandoAnuncio} />)}
 
       {auth && <AuthModal tab={auth.tab} rolPre={auth.rolPre} onClose={() => setAuth(null)} onCambiarTab={(t) => setAuth((a) => ({ ...a, tab: t }))} onAuth={completarAuth} />}
       {cancelando && <CancelarModal reserva={cancelando} onClose={() => setCancelando(null)} onConfirmar={confirmarCancelacion} />}
       {especificando && <EspecificacionesModal barco={especificando} onClose={() => setEspecificando(null)} onGuardar={(modelo, notas) => guardarEspecificaciones(especificando.id, modelo, notas)} />}
       {cancelandoProp && <CancelarPropietarioModal reserva={cancelandoProp} onClose={() => setCancelandoProp(null)} onConfirmar={confirmarCancelacionPropietario} />}
+      {reclamandoFianza && <ReclamarFianzaModal reserva={reclamandoFianza} onClose={() => setReclamandoFianza(null)} onConfirmar={confirmarReclamarFianza} />}
       {resenando && <ResenaModal reserva={resenando} onClose={() => setResenando(null)} onGuardar={guardarResena} />}
       {eliminandoAnuncio && <EliminarAnuncioModal anuncio={eliminandoAnuncio} error={errorEliminarAnuncio} onClose={() => { setEliminandoAnuncio(null); setErrorEliminarAnuncio(""); }} onConfirmar={confirmarEliminarAnuncio} />}
 

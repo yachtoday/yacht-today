@@ -25,6 +25,20 @@ Deno.serve(async (req) => {
 
     const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : (session.payment_intent ? session.payment_intent.id : null);
 
+    /* Guardamos la tarjeta del cliente para poder cobrarle la fianza SOLO si el propietario
+       reporta danos al finalizar. Sin esto la fianza es una etiqueta vacia: no se retiene
+       dinero en ningun momento (ver supabase/fianza-real.sql). */
+    const customerId = typeof session.customer === "string" ? session.customer : (session.customer ? session.customer.id : null);
+    let paymentMethodId = null;
+    if (paymentIntentId) {
+      try {
+        const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
+        paymentMethodId = typeof pi.payment_method === "string" ? pi.payment_method : (pi.payment_method ? pi.payment_method.id : null);
+      } catch (err) {
+        console.error("No se ha podido leer el metodo de pago de la reserva:", err);
+      }
+    }
+
     const { error } = await admin.from("reservas").insert({
       anuncio_id: Number(m.anuncioId),
       cliente_id: m.clienteId,
@@ -44,6 +58,8 @@ Deno.serve(async (req) => {
       fin_iso: m.finISO,
       estado: "confirmada",
       stripe_payment_intent_id: paymentIntentId,
+      stripe_customer_id: customerId,
+      stripe_payment_method_id: paymentMethodId,
     });
     if (error) console.error("Error creando reserva desde el webhook de Stripe:", error);
 

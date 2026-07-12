@@ -177,6 +177,16 @@ const ZONAS = ["Todas", "Baleares", "Costa Brava", "C. Valenciana", "Costa Blanc
    para que Google sepa de qué va. */
 const RUTA_ANUNCIO = /^\/(barco|experiencia|material)\/(\d+)/;
 const SECCIONES_LEGALES = ["privacidad", "terminos", "aviso-legal", "cookies"];
+
+/* El descuento de última hora solo vale si el alquiler empieza dentro de los próximos 7 días.
+   Devuelve el % a aplicar (0 si no toca). Mantener sincronizado con crear-pago. */
+const ULTIMA_HORA_DIAS = 7;
+function ultimaHoraAplicable(item, inicioISO) {
+  const dto = Number(item?.ultima_hora_descuento) || 0;
+  if (!dto || !inicioISO) return 0;
+  const dias = (new Date(inicioISO).getTime() - Date.now()) / 86400000;
+  return dias >= 0 && dias <= ULTIMA_HORA_DIAS ? dto : 0;
+}
 const aSlug = (s) => String(s || "")
   .toLowerCase()
   .normalize("NFD").replace(/[̀-ͯ]/g, "") // fuera acentos: "Bavaria Crucero" → "bavaria-crucero"
@@ -284,7 +294,11 @@ function Tarjeta({ item, onOpen }) {
             <h3 className="card-nombre">{item.nombre}</h3>
             <p className="card-lugar"><MapPin size={13} /> {item.puerto}</p>
           </div>
-          <span className="rating"><Star size={12} fill="currentColor" /> {item.rating.toFixed(1)}</span>
+          {/* Sin reseñas no hay nota. Antes todo anuncio nacía con 5.0 y "0 reseñas": cinco
+              estrellas puestas por nadie. */}
+          {item.reviews > 0
+            ? <span className="rating"><Star size={12} fill="currentColor" /> {Number(item.rating).toFixed(1)}</span>
+            : <span className="rating-nuevo">Nuevo</span>}
         </div>
         <div className="card-chips">
           {item.clase === "experiencia" ? (<><Chip icon={Users}>{item.plazas}</Chip><Chip icon={Clock}>{item.duracion}</Chip><span className="badge"><BadgeCheck size={11} /> con anfitrión</span></>)
@@ -326,7 +340,13 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
   const patronBloqueado = item.patron === "incluido";
   const patronActivo = !exp && !mat && (patronBloqueado || (item.patron === "opcional" && conPatron));
 
-  const base = exp ? item.persona * personas : (modo === "horas" ? item.hora * horas : item.dia * dias);
+  const baseSinDto = exp ? item.persona * personas : (modo === "horas" ? item.hora * horas : item.dia * dias);
+  /* "Última hora" solo se aplica a lo que empieza esta semana: es un descuento para llenar el
+     hueco de los próximos días, no para regalarle el barco a quien reserva para agosto.
+     Se recalcula igual en el servidor (crear-pago), que es quien manda. */
+  const dtoUltimaHora = ultimaHoraAplicable(item, exp ? dtISO(fechaExp) : modo === "horas" ? dtISO(fechaHoras) : dtISO(inicio));
+  const ahorroUltimaHora = Math.round(baseSinDto * dtoUltimaHora / 100);
+  const base = baseSinDto - ahorroUltimaHora;
   const patronCoste = patronActivo ? (modo === "horas" ? PATRON_HORA * horas : PATRON_DIA * dias) : 0;
   const subtotal = base + patronCoste;
   const { descuento: dtoGestion } = estadoFidelidad(numReservas);
@@ -406,7 +426,9 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
           <Compartir item={item} />
         </div>
       </div>
-      <p className="ficha-sub"><span className="rating"><Star size={13} fill="currentColor" /> {item.rating.toFixed(1)}</span> · {item.reviews} reseñas · {exp
+      <p className="ficha-sub">{item.reviews > 0
+        ? <><span className="rating"><Star size={13} fill="currentColor" /> {Number(item.rating).toFixed(1)}</span> · {item.reviews} {item.reviews === 1 ? "reseña" : "reseñas"} · </>
+        : <><span className="rating-nuevo">Nuevo · sin reseñas todavía</span> · </>}{exp
         ? <span className="verif-inline"><BadgeCheck size={14} /> Con {item.anfitrion} · {item.duracion}</span>
         : <span className="verif-inline"><BadgeCheck size={14} /> {mat ? "Revisado por Yacht Today" : "Anfitrión verificado"}</span>}</p>
 
@@ -434,7 +456,7 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
           <>
               <div className="reserva-top">
                 <span className="precio grande"><b>{eur(exp ? item.persona : (modo === "horas" ? item.hora : item.dia))}</b><small>/{exp ? "persona" : modo === "horas" ? "hora" : "día"}</small></span>
-                <span className="rating"><Star size={13} fill="currentColor" /> {item.rating.toFixed(1)}</span>
+                {item.reviews > 0 && <span className="rating"><Star size={13} fill="currentColor" /> {Number(item.rating).toFixed(1)}</span>}
               </div>
 
               {exp ? (
@@ -504,7 +526,8 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
               )}
 
               <div className="desglose">
-                <Linea k={exp ? `${eur(item.persona)} × ${personas} pers.` : (modo === "horas" ? `${eur(item.hora)} × ${horas} h` : `${eur(item.dia)} × ${dias} ${dias > 1 ? "días" : "día"}`)} v={eur(base)} />
+                <Linea k={exp ? `${eur(item.persona)} × ${personas} pers.` : (modo === "horas" ? `${eur(item.hora)} × ${horas} h` : `${eur(item.dia)} × ${dias} ${dias > 1 ? "días" : "día"}`)} v={eur(baseSinDto)} tachado={dtoUltimaHora > 0} />
+                {dtoUltimaHora > 0 && <Linea k={`Última hora (-${dtoUltimaHora}%)`} v={`-${eur(ahorroUltimaHora)}`} verde />}
                 {patronActivo && <Linea k={`Patrón (${modo === "horas" ? horas + " h" : dias + (dias > 1 ? " días" : " día")})`} v={eur(patronCoste)} />}
                 <Linea k={`Gastos de servicio (${COMISION * 100}%)`} v={eur(servicioBase)} tachado={dtoGestion > 0} />
                 {dtoGestion > 0 && <Linea k={`Descuento de fidelidad (-${dtoGestion * 100}%)`} v={`-${eur(ahorro)}`} verde />}
@@ -1086,8 +1109,8 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
                       <Gauge size={14} /> {b.motorModelo ? `Motor: ${b.motorModelo}` : "Añadir especificaciones de motor"}
                     </button>
                   )}
-                  {sinReservasProximas && !b.ultimaHora?.activo && <UltimaHoraAlerta barco={b} onActivar={onActivarUltimaHora} />}
-                  {b.ultimaHora?.activo && <span className="fianza-badge"><Zap size={12} style={{ verticalAlign: "-2px" }} /> Última hora activa: -{b.ultimaHora.descuento}% <button className="link-inline" onClick={() => onDesactivarUltimaHora(b.id)}>Desactivar</button></span>}
+                  {sinReservasProximas && !b.ultima_hora_descuento && <UltimaHoraAlerta barco={b} onActivar={onActivarUltimaHora} />}
+                  {b.ultima_hora_descuento > 0 && <span className="fianza-badge"><Zap size={12} style={{ verticalAlign: "-2px" }} /> Última hora: -{b.ultima_hora_descuento}% en los alquileres que empiecen esta semana <button className="link-inline" onClick={() => onDesactivarUltimaHora(b.id)}>Desactivar</button></span>}
                 </li>
               );
             })}<button className="btn-sec ancho" onClick={onPublicar}><Plus size={15} /> Publicar otro</button></ul>)
@@ -2125,8 +2148,18 @@ export default function App() {
     if (!justificado) setAvisosPropietario((p) => p + 1);
     setCancelandoProp(null);
   };
-  const activarUltimaHora = (id, descuento) => setMisBarcos((p) => p.map((b) => (b.id === id ? { ...b, ultimaHora: { activo: true, descuento } } : b)));
-  const desactivarUltimaHora = (id) => setMisBarcos((p) => p.map((b) => (b.id === id ? { ...b, ultimaHora: { activo: false, descuento: 0 } } : b)));
+  /* Antes esto solo tocaba el estado del navegador: el propietario activaba el descuento, veía
+     el cartelito, y al recargar había desaparecido. Nunca se guardó ni se aplicó a nada. */
+  const guardarUltimaHora = (id, descuento) => {
+    actualizarAnuncio(id, { ultima_hora_descuento: descuento })
+      .then((a) => {
+        setMisBarcos((p) => p.map((b) => (b.id === id ? a : b)));
+        setAnuncios((p) => p.map((b) => (b.id === id ? a : b)));
+      })
+      .catch(console.error);
+  };
+  const activarUltimaHora = (id, descuento) => guardarUltimaHora(id, descuento);
+  const desactivarUltimaHora = (id) => guardarUltimaHora(id, null);
   const confirmarEliminarAnuncio = async () => {
     setErrorEliminarAnuncio("");
     try {
@@ -2394,6 +2427,7 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .card-nombre{font-family:'Newsreader',serif;font-size:18px;font-weight:600;color:var(--tinta);line-height:1.15}
 .card-lugar{display:flex;align-items:center;gap:4px;color:var(--muted);font-size:13px;margin-top:3px}
 .rating{display:inline-flex;align-items:center;gap:4px;color:var(--tinta);font-size:13px;font-weight:600;white-space:nowrap}
+.rating-nuevo{display:inline-flex;align-items:center;padding:2px 9px;background:var(--brisa-suave);color:var(--noche);border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
 .rating svg{color:var(--oro)}
 .card-chips{display:flex;gap:7px;margin:13px 0;flex-wrap:wrap}
 .chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--slate);background:var(--arena);padding:5px 10px;border-radius:999px}

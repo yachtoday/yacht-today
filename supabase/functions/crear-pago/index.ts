@@ -16,6 +16,7 @@ const COMISION = 0.15;
 const PATRON_HORA = 30;
 const PATRON_DIA = 180;
 const FIANZA_PCT = 0.2;
+const ULTIMA_HORA_DIAS = 7;
 
 // Mantener sincronizado con las mismas constantes en src/App.jsx
 const AVISO_MIN_HORAS = 3;
@@ -99,7 +100,15 @@ Deno.serve(async (req) => {
     }
 
     const patronActivo = !exp && !mat && (anuncio.patron === "incluido" || (anuncio.patron === "opcional" && !!conPatron));
-    const base = exp ? anuncio.persona * personas : (modo === "horas" ? anuncio.hora * horas : anuncio.dia * dias);
+    const baseSinDto = exp ? anuncio.persona * personas : (modo === "horas" ? anuncio.hora * horas : anuncio.dia * dias);
+    /* Descuento de "última hora": solo para alquileres que empiezan dentro de los próximos 7
+       días. Se recalcula AQUÍ, con el descuento real del anuncio — nunca con lo que diga el
+       navegador. Mantener sincronizado con `ultimaHoraAplicable` en src/App.jsx. */
+    const dtoUH = Number(anuncio.ultima_hora_descuento) || 0;
+    const diasHastaInicio = (new Date(inicioISO).getTime() - Date.now()) / 86400000;
+    const dtoAplicable = dtoUH > 0 && diasHastaInicio >= 0 && diasHastaInicio <= ULTIMA_HORA_DIAS ? dtoUH : 0;
+    const base = baseSinDto - Math.round(baseSinDto * dtoAplicable / 100);
+
     const patronCoste = patronActivo ? (modo === "horas" ? PATRON_HORA * horas : PATRON_DIA * dias) : 0;
     const subtotal = Math.round(base + patronCoste);
 

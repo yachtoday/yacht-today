@@ -10,6 +10,7 @@ import {
   CalendarCheck, ClipboardList, Sparkles, Fish, Wind, Gift, Trophy,
   Clock, Award, Waypoints, Handshake, Zap, CloudRain,
   ChevronDown, MessageCircle, HelpCircle, RotateCcw, Trash2, Wrench, FileText,
+  Wallet, CreditCard,
 } from "lucide-react";
 import fotoHero from "./assets/fotos/hero-845.jpg";
 import fotoMarina from "./assets/fotos/marina-5075093.jpg";
@@ -1048,6 +1049,70 @@ function Ventajas({ onExplorar, onPublicar, onMantenimiento }) {
   );
 }
 
+/* ── Página de propietarios ──────────────────────────────────────────
+   Es el sitio al que se enlaza desde fuera (yachtoday.com/propietarios) cuando se
+   contacta a un propietario: sin esto aterrizaba en la portada, que está escrita para
+   quien quiere alquilar un barco, no para quien lo tiene. El tono es deliberadamente
+   honesto sobre que la plataforma acaba de abrir: es lo único que la diferencia de una
+   web anónima, y el propietario lo va a comprobar en dos clics de todas formas. */
+function Propietarios({ onPublicar, onVentajas }) {
+  return (
+    <div className="ventajas">
+      <section className="v-hero" style={{ backgroundImage: `linear-gradient(120deg, rgba(15,39,50,.92) 0%, rgba(15,39,50,.75) 45%, rgba(18,48,61,.58) 100%), url(${MARINA_FOTO})` }}>
+        <span className="eyebrow claro">Para propietarios</span>
+        <h1 className="serif v-h1">Tu barco pasa el año amarrado. Que al menos se pague solo.</h1>
+        <p className="v-sub">Un amarre, un seguro y una revisión cuestan lo mismo lo uses dos fines de semana o veinte. Alquílalo los días que no lo tocas y deja que cubra sus propios gastos.</p>
+        <div className="v-hero-btns"><button className="btn-primario auto claro-btn" onClick={onPublicar}>Publica tu barco</button></div>
+      </section>
+
+      <section className="seccion">
+        <div className="sec-head"><h2 className="serif">Lo que te llevas</h2></div>
+        <div className="ref-grid">
+          <div className="ref"><Wallet size={20} /><b>Cobras tu tarifa íntegra</b><p>La comisión del {Math.round(COMISION * 100)} % la paga quien alquila, no tú. Si pones 200 € al día, recibes 200 € al día.</p></div>
+          <div className="ref"><CreditCard size={20} /><b>Te pagan por adelantado</b><p>El cliente paga con tarjeta al reservar y el dinero llega a tu cuenta. Se acabó cobrar en mano y que te dejen plantado.</p></div>
+          <div className="ref"><ShieldCheck size={20} /><b>Fianza retenida</b><p>Se le retiene una fianza al cliente y solo la recupera cuando eres tú quien da el alquiler por terminado. Si te devuelven el barco mal, no te lo comes tú.</p></div>
+          <div className="ref"><FileText size={20} /><b>Sabes a quién se lo dejas</b><p>Pedimos licencia y documentación. Y tú decides con cuánta antelación mínima quieren reservarte: nadie te va a coger el barco para dentro de una hora.</p></div>
+        </div>
+      </section>
+
+      <section className="seccion pasos-sec">
+        <h2 className="serif centro">Cómo funciona</h2>
+        <div className="pasos">
+          <Paso n="01" icon={Plus} t="Publicas tu barco" d="Fotos, precio por horas o por días, y si lo alquilas con patrón o sin él. Revisamos la documentación antes de que salga publicado." />
+          <Paso n="02" icon={CalendarCheck} t="Recibes la reserva ya pagada" d="Te avisamos por correo. La reserva llega confirmada y cobrada: no tienes que perseguir a nadie." />
+          <Paso n="03" icon={Anchor} t="Entregas el barco y cobras" d="El dinero va a tu cuenta bancaria. Cuando das el alquiler por terminado, se libera la fianza del cliente." />
+        </div>
+      </section>
+
+      <section className="seccion">
+        <div className="honesto">
+          <span className="eyebrow">Te lo decimos claro</span>
+          <h2 className="serif">Acabamos de abrir, y todavía no tenemos clientes</h2>
+          <p>Preferimos decírtelo nosotros a que lo descubras solo. Yacht Today acaba de arrancar y estamos buscando a los primeros propietarios de cada zona — por eso te escribimos.</p>
+          <p><b>Por eso no te pedimos nada a cambio:</b> publicar es gratis, no hay exclusividad y puedes seguir anunciando tu barco donde ya lo tengas. Si te entra una reserva, ganas. Si no entra, no has perdido nada. Solo ganamos cuando tú ganas.</p>
+        </div>
+      </section>
+
+      <section className="seccion">
+        <div className="premium">
+          <Wrench size={22} />
+          <div style={{ flex: 1 }}><b>Y cuanto más alquilas, menos te cuesta mantenerlo</b><p>"Cuida tu Barco": al llegar a 3, 10, 20 y 40 alquileres desbloqueas kits de limpieza, revisiones y equipamiento. Algo que ninguna otra plataforma te da.</p></div>
+          <button className="btn-sec sm" style={{ marginLeft: "auto" }} onClick={onVentajas}>Ver el programa</button>
+        </div>
+      </section>
+
+      <section className="seccion">
+        <div className="arranque">
+          <h2 className="serif">¿Publicamos tu barco?</h2>
+          <p>Son cinco minutos. Y si prefieres que te echemos una mano con las fotos o el precio, escríbenos a <a className="link-inline" href="mailto:soporte@yachtoday.com">soporte@yachtoday.com</a> y lo vemos juntos.</p>
+          <button className="btn-primario auto" onClick={onPublicar}>Publica tu barco</button>
+          <p className="arranque-nota">Gratis · Sin exclusividad · Cobras tu tarifa íntegra</p>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 /* ── Spen Mechanics S.L.: publicidad del mantenimiento náutico de Eric ───
    Contenido de borrador — pendiente de que Eric confirme los servicios
    exactos, el tono y el contacto real antes de darlo por definitivo. */
@@ -1484,6 +1549,12 @@ export default function App() {
     listarAnunciosPublicados().then(setAnuncios).catch(console.error).finally(() => setCargandoAnuncios(false));
   }, []);
 
+  /* yachtoday.com/propietarios entra directo en la página de propietarios: es el enlace
+     que se manda a los dueños de barcos, y la portada está escrita para el cliente. */
+  useEffect(() => {
+    if (window.location.pathname.replace(/\/$/, "") === "/propietarios") setVista("propietarios");
+  }, []);
+
   useEffect(() => {
     if (!usuario) return;
     listarMisAnuncios(usuario.id).then(setMisBarcos).catch(console.error);
@@ -1715,6 +1786,7 @@ export default function App() {
 
       {vista === "ficha" && item && (<Ficha item={item} usuario={usuario} numReservas={reservas.filter((r) => r.estado === "finalizada").length} onBack={() => ir("explorar")} esFavorito={!!favoritos.find((x) => x.id === item.id)} onToggleFav={toggleFav} onNecesitaCuenta={() => abrirAuth("registro", "cliente", "reservar")} />)}
       {vista === "ventajas" && <Ventajas onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onMantenimiento={() => ir("mantenimiento")} />}
+      {vista === "propietarios" && <Propietarios onPublicar={irPublicar} onVentajas={() => ir("ventajas")} />}
       {vista === "mantenimiento" && <SpenMechanics />}
       {(vista === "contacto" || vista === "faq" || vista === "cancelaciones") && <Ayuda seccion={vista} onCambiar={ir} usuario={usuario} onIrPanel={() => ir("panel")} onAbrirAuth={abrirAuth} />}
       {vista === "publicar" && usuario && <Publicar usuario={usuario} onDone={() => ir("panel")} onPublicado={(b) => setMisBarcos((p) => [b, ...p])} />}
@@ -1866,6 +1938,11 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .filtros-fila select{padding:9px 13px;border:1px solid var(--linea);border-radius:10px;background:var(--blanco)}
 .check{display:flex;align-items:center;gap:7px;font-size:13.5px;color:var(--slate)}
 .vacio{text-align:center;padding:60px 20px;color:var(--muted)}.vacio svg{color:var(--mar);margin-bottom:12px}.vacio p{margin-bottom:16px}
+
+.honesto{max-width:760px;margin:0 auto;padding:clamp(26px,4vw,40px);background:var(--blanco);border:1px solid var(--linea);border-left:4px solid var(--mar);border-radius:14px}
+.honesto h2{font-size:clamp(21px,2.8vw,27px);margin:8px 0 14px}
+.honesto p{color:var(--slate);margin-bottom:12px}
+.honesto p:last-child{margin-bottom:0}
 
 .arranque{text-align:center;max-width:620px;margin:0 auto;padding:clamp(30px,5vw,52px) 24px;background:var(--blanco);border:1px solid var(--linea);border-radius:18px}
 .arranque h2{font-size:clamp(24px,3.4vw,32px);margin:10px 0 12px}

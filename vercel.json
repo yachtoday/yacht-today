@@ -1,5 +1,7 @@
 {
+  "cleanUrls": true,
   "rewrites": [
-    { "source": "/((?!assets/).*)", "destination": "/index.html" }
+    { "source": "/propietarios", "destination": "/propietarios.html" },
+    { "source": "/((?!assets/|robots.txt|sitemap.xml|og-).*)", "destination": "/index.html" }
   ]
 }

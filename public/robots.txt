@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+
+# Zonas privadas: no aportan nada a Google y no deben indexarse.
+Disallow: /?vista=panel
+Disallow: /?pago=
+Disallow: /?stripe=
+
+Sitemap: https://yachtoday.com/sitemap.xml

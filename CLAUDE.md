@@ -237,10 +237,10 @@ La web cobra con tarjeta y guarda DNI, licencias y pólizas, y **no tenía ni un
 legal** — en España y la UE eso es ilegal, no un descuido de diseño. Ahora hay privacidad,
 términos, aviso legal y cookies, cada una con su URL (`/privacidad`, `/terminos`,
 `/aviso-legal`, `/cookies`) y enlazadas desde el pie.
-- **Falta que Eric rellene su NIF y su domicilio** en la constante `TITULAR` de
-  `src/Legal.jsx`. Mientras estén vacíos, las páginas **avisan en rojo de que están
-  incompletas** en vez de fingir. No se inventan: falsear el NIF de un aviso legal sería
-  peor que no tenerlo.
+- Los datos del titular (nombre, NIF, domicilio) viven en la constante `TITULAR` de
+  `src/Legal.jsx`, ya rellenos. Si alguno se vacía, las páginas **avisan en rojo de que están
+  incompletas** en vez de fingir: falsear el NIF de un aviso legal sería peor que no tenerlo.
+  Si algún día Yacht Today pasa a ser una S.L., hay que cambiar ahí el nombre y el NIF.
 - La política de cookies dice la verdad: **no hay rastreo ni analítica**, solo la sesión.
   Por eso **no hay cartel de consentimiento** — no habría nada que consentir.
 - Escrito sin abogado. Cubre lo básico; antes de crecer, que lo revise uno.

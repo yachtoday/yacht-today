@@ -232,6 +232,19 @@ Cómo funciona ahora (`supabase/fianza-real.sql`):
 - La fianza del **material** (SUP y kayak) la fija el propietario en euros; la de los barcos
   sigue siendo el 20 % del alquiler (`FIANZA_PCT`).
 
+## Páginas legales (`src/Legal.jsx`)
+La web cobra con tarjeta y guarda DNI, licencias y pólizas, y **no tenía ni una página
+legal** — en España y la UE eso es ilegal, no un descuido de diseño. Ahora hay privacidad,
+términos, aviso legal y cookies, cada una con su URL (`/privacidad`, `/terminos`,
+`/aviso-legal`, `/cookies`) y enlazadas desde el pie.
+- **Falta que Eric rellene su NIF y su domicilio** en la constante `TITULAR` de
+  `src/Legal.jsx`. Mientras estén vacíos, las páginas **avisan en rojo de que están
+  incompletas** en vez de fingir. No se inventan: falsear el NIF de un aviso legal sería
+  peor que no tenerlo.
+- La política de cookies dice la verdad: **no hay rastreo ni analítica**, solo la sesión.
+  Por eso **no hay cartel de consentimiento** — no habría nada que consentir.
+- Escrito sin abogado. Cubre lo básico; antes de crecer, que lo revise uno.
+
 ## Nada falso en producción (2026-07-12)
 Al abrir la web al público se quitaron tres cosas que eran de mentira y que en un sitio
 real dejaban de ser inocentes:

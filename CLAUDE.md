@@ -149,12 +149,17 @@ diferencia de cualquier usuario real de la app).
   navegador directamente — verificado con pruebas reales (`curl` sin sesión intentando
   insertar una reserva "pagada": rechazado por RLS; ver también el trigger de arriba).
 
-## Pendiente: buzón de `soporte@yachtoday.com`
-La app ya publica esa dirección (pie de página y textos del RGPD en `src/App.jsx`), pero
-comprar el dominio **no da buzón de correo**: hoy nadie lee lo que se envíe ahí. Hace falta
-un reenvío a Gmail. Ojo: **Cloudflare Email Routing no sirve** aquí, porque exige poner sus
-propios nameservers y el DNS vive en Vercel; hay que usar algo que funcione solo con
-registros MX/TXT (p. ej. ImprovMX, gratis). Resend envía, pero no recibe.
+## Correo entrante: `soporte@yachtoday.com` y cualquier otra dirección
+Resend **envía** pero no recibe, así que el correo entrante lo hace **ImprovMX** (plan
+gratuito, cuenta de `yachtoday@gmail.com`): registros MX (`mx1`/`mx2.improvmx.com`) y SPF
+en el DNS de Vercel, y un **alias comodín `*@yachtoday.com` → `yachtoday@gmail.com`**. O
+sea que `soporte@`, `info@`, `hola@`… todas llegan al Gmail del negocio sin configurar nada
+más. Verificado el 2026-07-12. (Cloudflare Email Routing **no** vale aquí: exige sus
+propios nameservers y el DNS vive en Vercel.)
+
+El SPF de ImprovMX va en el dominio raíz y el de Resend en el subdominio `send.` — por eso
+conviven sin pisarse: Resend firma con DKIM (`resend._domainkey`) y usa `send.yachtoday.com`
+como Return-Path, así que el SPF de la raíz no afecta al envío.
 
 ## Notas de trabajo
 - El usuario (Eric) es no técnico: explica los pasos de forma sencilla y ve poco a poco.

@@ -17,9 +17,9 @@ import React from "react";
 /* Rellena esto con tus datos reales. Mientras `NIF` o `DOMICILIO` sigan vacíos, el aviso
    legal avisa de que está incompleto: es preferible a publicar un dato inventado. */
 export const TITULAR = {
-  nombre: "Eric Niceto",              // nombre y apellidos, o razón social si lo pones a nombre de una sociedad
-  nif: "",                            // ← RELLENAR (DNI/NIF)
-  domicilio: "",                      // ← RELLENAR (domicilio a efectos de notificaciones)
+  nombre: "Eric Niceto",              // nombre y apellidos, o razón social si algún día lo pones a nombre de una sociedad
+  nif: "20906546Y",
+  domicilio: "Camino la Plana 24, 12004 Castellón de la Plana, España",
   email: "soporte@yachtoday.com",
   web: "yachtoday.com",
 };

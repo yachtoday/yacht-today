@@ -41,6 +41,14 @@ Deno.serve(async (req) => {
     // Solo el propietario de esa reserva, y solo la suya.
     if (reserva.propietario_id !== user.id) return error("Esta reserva no es tuya.");
 
+    /* Solo se puede reclamar un daño cuando el alquiler ya ha terminado. La app esconde el
+       botón hasta entonces, pero eso es el navegador: quien lo impide de verdad es esto.
+       Sin este control, un propietario podría cobrarle la fianza a un cliente antes
+       siquiera de entregarle el barco. */
+    if (new Date(reserva.fin_iso).getTime() > Date.now()) {
+      return error("El alquiler todavía no ha terminado: no puedes reclamar daños aún.");
+    }
+
     if (!(Number(reserva.fianza) > 0)) return error("Esta reserva no tiene fianza.");
     if (reserva.fianza_estado === "cobrada") return error("La fianza de esta reserva ya se cobró.");
     if (reserva.fianza_estado === "liberada") return error("Ya diste el visto bueno a esta reserva: la fianza está liberada y no se puede cobrar.");

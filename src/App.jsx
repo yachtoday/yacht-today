@@ -1735,7 +1735,7 @@ export default function App() {
           <div><h4>Ayuda</h4><button onClick={() => ir("contacto")}>Contacto</button><button onClick={() => ir("faq")}>Preguntas frecuentes</button><button onClick={() => ir("cancelaciones")}>Cancelaciones</button></div>
         </div>
       </footer>
-      <div className="foot-legal">Prototipo · Yacht Today © 2026</div>
+      <div className="foot-legal">Yacht Today © 2026 · Alquiler náutico entre particulares en toda España</div>
     </div>
   );
 }

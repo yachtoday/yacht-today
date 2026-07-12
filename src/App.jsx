@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabaseClient";
-import { listarAnunciosPublicados, listarMisAnuncios, crearAnuncio, actualizarAnuncio, borrarArchivosDeAnuncio, subirFotos, subirDocumentos, urlFirmadaDocumento, eliminarAnuncio, listarAnunciosEnRevision, cambiarEstadoAnuncio } from "./lib/anuncios";
+import { listarAnunciosPublicados, listarMisAnuncios, crearAnuncio, actualizarAnuncio, borrarArchivosDeAnuncio, notificarAnuncio, subirFotos, subirDocumentos, urlFirmadaDocumento, eliminarAnuncio, listarAnunciosEnRevision, cambiarEstadoAnuncio } from "./lib/anuncios";
 import { listarMisReservas, listarReservasRecibidas, actualizarReserva } from "./lib/reservas";
 import { iniciarPago, conectarCobros, cobrarFianza } from "./lib/pagos";
 import {
@@ -669,6 +669,46 @@ function ReclamarFianzaModal({ reserva, onClose, onConfirmar }) {
   );
 }
 
+/* ── Modal rechazar anuncio ───────────────────────────────────────────
+   Rechazar sin decir por qué deja al propietario a oscuras y sin arreglo posible: se le
+   exige al admin escribir qué hay que corregir, y eso le llega por correo. */
+function RechazarAnuncioModal({ anuncio, onClose, onConfirmar }) {
+  const [motivo, setMotivo] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState("");
+
+  const confirmar = async () => {
+    setEnviando(true);
+    setError("");
+    try {
+      await onConfirmar(anuncio, motivo.trim());
+    } catch (err) {
+      setError(err.message || "No se ha podido rechazar el anuncio.");
+      setEnviando(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <button className="modal-x" onClick={onClose}><X size={20} /></button>
+        <div className="aviso-icon"><Info size={26} /></div>
+        <h2 className="serif modal-tit">Rechazar «{anuncio.nombre}»</h2>
+        <p className="modal-sub">Al propietario le llegará por correo lo que escribas aquí. Sé concreto: es lo único que tiene para poder corregirlo.</p>
+        <label className="field">
+          <span>¿Qué tiene que corregir?</span>
+          <textarea rows={4} value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="La foto del seguro está borrosa y no se lee la fecha de caducidad. Vuelve a subirla y lo publicamos." />
+        </label>
+        {error && <p className="auth-error">{error}</p>}
+        <button className="btn-primario ancho" onClick={onClose}>Volver</button>
+        <button className="btn-cancelar ancho" disabled={!motivo.trim() || enviando} onClick={confirmar}>
+          {enviando ? "Enviando…" : "Rechazar y avisarle"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ── Modal eliminar anuncio ───────────────────────────────────────── */
 function EliminarAnuncioModal({ anuncio, error, onClose, onConfirmar }) {
   const [borrando, setBorrando] = useState(false);
@@ -997,6 +1037,13 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
                       <button className="acc" title="Eliminar anuncio" onClick={() => onEliminarAnuncio(b)}><Trash2 size={14} /></button>
                     </div>
                   </div>
+                  {b.estado === "Rechazado" && b.motivo_rechazo && (
+                    <p className="mini-nota mini-nota-error" style={{ whiteSpace: "pre-wrap" }}>
+                      <b>No se ha publicado:</b> {b.motivo_rechazo}
+                      {"\n"}Púlsale a «Editar», corrígelo y volverá a la cola de revisión.
+                    </p>
+                  )}
+                  {b.estado === "En revisión" && <p className="mini-nota">Lo estamos revisando. Te avisamos por correo en cuanto esté publicado.</p>}
                   <p className="mini-nota">{completadasBarco} alquiler{completadasBarco === 1 ? "" : "es"} completados{siguienteBarco ? ` · faltan ${siguienteBarco.min - completadasBarco} para el siguiente premio` : " · ¡nivel máximo!"}</p>
                   {desbloqueado && (
                     <button className="btn-sec sm" onClick={() => onEspecificar(b)}>
@@ -1474,6 +1521,10 @@ function Publicar({ usuario, anuncio, onDone, onPublicado }) {
         || documentos.length > 0
         || documentosBorrados.length > 0
   );
+  /* Un anuncio rechazado vuelve a la cola en cuanto su dueño lo corrige y guarda: si no,
+     un rechazo lo mataría para siempre y tendría que borrarlo y empezar de cero. */
+  const eraRechazado = editando && anuncio.estado === "Rechazado";
+  const vuelveARevision = docsCambiados || eraRechazado;
 
   const publicar = () => {
     if (faltaDocumentacion) return;
@@ -1503,10 +1554,12 @@ function Publicar({ usuario, anuncio, onDone, onPublicado }) {
 
         let guardado;
         if (editando) {
-          /* Solo se toca `estado` para bajarlo a revisión si ha cambiado la documentación.
-             Subirlo a "Publicado" es cosa del admin y el trigger de la base de datos lo
-             impide igualmente (supabase/editar-y-borrar-anuncios.sql). */
-          guardado = await actualizarAnuncio(anuncio.id, { ...propio, ...(docsCambiados ? { estado: "En revisión" } : {}) });
+          /* Solo se toca `estado` para bajarlo a revisión. Subirlo a "Publicado" es cosa del
+             admin y el trigger de la base de datos lo impide igualmente. */
+          guardado = await actualizarAnuncio(anuncio.id, {
+            ...propio,
+            ...(vuelveARevision ? { estado: "En revisión", motivo_rechazo: null } : {}),
+          });
           // Las fotos y documentos que quitó ya no los referencia nadie: fuera de Storage.
           if (fotosBorradas.length || documentosBorrados.length) {
             await borrarArchivosDeAnuncio({ fotos: fotosBorradas, documentos: documentosBorrados }).catch(console.error);
@@ -1514,6 +1567,8 @@ function Publicar({ usuario, anuncio, onDone, onPublicado }) {
         } else {
           guardado = await crearAnuncio({ ...propio, estado: "En revisión" });
         }
+        // Avisa al admin de que tiene algo que revisar. Antes no se enteraba nadie.
+        if (!editando || vuelveARevision) await notificarAnuncio("nuevo", guardado.id);
         onPublicado(guardado);
         setEnviado(true);
       } catch (err) {
@@ -1525,13 +1580,13 @@ function Publicar({ usuario, anuncio, onDone, onPublicado }) {
   };
 
   if (enviado) {
-    const vuelveARevision = !editando || docsCambiados;
+    const aRevision = !editando || vuelveARevision;
     return (
       <div className="publicar"><div className="ok centro">
         <div className="ok-icon"><Check size={28} strokeWidth={3} /></div>
         <h3 className="serif">{editando ? "Cambios guardados" : "¡Recibido!"}</h3>
-        <p>{vuelveARevision
-          ? "Un revisor de Yacht Today comprobará la documentación antes de publicarlo. Lo tienes en Mis anuncios."
+        <p>{aRevision
+          ? "Un revisor de Yacht Today lo comprobará y te avisaremos por correo en cuanto esté publicado. Lo tienes en Mis anuncios."
           : "Tu anuncio ya se ve actualizado en Yacht Today."}</p>
         <button className="btn-primario ancho" onClick={onDone}>Ir a mi panel</button>
       </div></div>
@@ -1550,6 +1605,13 @@ function Publicar({ usuario, anuncio, onDone, onPublicado }) {
           {[["barco", "Un barco", Ship], ["experiencia", "Una experiencia", Sparkles], ["material", "SUP o kayak", Wind]].map(([v, t, Ic]) => (
             <button key={v} className={clase === v ? "cp on" : "cp"} onClick={() => setClase(v)}><Ic size={18} /> {t}</button>
           ))}
+        </div>
+      )}
+      {editando && anuncio.motivo_rechazo && (
+        <div className="honesto" style={{ marginBottom: 18 }}>
+          <span className="eyebrow">Qué hay que corregir</span>
+          <p style={{ whiteSpace: "pre-wrap" }}>{anuncio.motivo_rechazo}</p>
+          <p><b>Arréglalo y guarda:</b> volverá a la cola de revisión automáticamente.</p>
         </div>
       )}
       {editando && docsCambiados && <p className="mini-nota mini-nota-error">Has cambiado la documentación: al guardar, el anuncio dejará de verse hasta que un revisor lo apruebe.</p>}
@@ -1737,6 +1799,7 @@ export default function App() {
   const [cancelandoProp, setCancelandoProp] = useState(null);
   const [reclamandoFianza, setReclamandoFianza] = useState(null);
   const [editandoAnuncio, setEditandoAnuncio] = useState(null);
+  const [rechazandoAnuncio, setRechazandoAnuncio] = useState(null);
   const [avisosPropietario, setAvisosPropietario] = useState(0);
   const [resenando, setResenando] = useState(null);
   const [eliminandoAnuncio, setEliminandoAnuncio] = useState(null);
@@ -1777,10 +1840,12 @@ export default function App() {
     listarAnunciosEnRevision().then(setAnunciosRevision).catch(console.error);
   }, [esAdmin]);
 
-  const revisarAnuncio = async (anuncio, estado) => {
-    await cambiarEstadoAnuncio(anuncio.id, estado);
+  const revisarAnuncio = async (anuncio, estado, motivoRechazo = null) => {
+    await cambiarEstadoAnuncio(anuncio.id, estado, motivoRechazo);
     setAnunciosRevision((p) => p.filter((a) => a.id !== anuncio.id));
+    setMisBarcos((p) => p.map((b) => (b.id === anuncio.id ? { ...b, estado, motivo_rechazo: estado === "Rechazado" ? motivoRechazo : null } : b)));
     if (estado === "Publicado") setAnuncios((p) => [{ ...anuncio, estado }, ...p]);
+    setRechazandoAnuncio(null);
   };
 
   const verDocumento = async (ruta) => {
@@ -2022,13 +2087,14 @@ export default function App() {
           }}
         />
       )}
-      {vista === "panel" && usuario && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={(a) => revisarAnuncio(a, "Rechazado")} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEditarAnuncio={(b) => { setEditandoAnuncio(b); ir("editar"); }} onEliminarAnuncio={setEliminandoAnuncio} />)}
+      {vista === "panel" && usuario && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={setRechazandoAnuncio} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEditarAnuncio={(b) => { setEditandoAnuncio(b); ir("editar"); }} onEliminarAnuncio={setEliminandoAnuncio} />)}
 
       {auth && <AuthModal tab={auth.tab} rolPre={auth.rolPre} onClose={() => setAuth(null)} onCambiarTab={(t) => setAuth((a) => ({ ...a, tab: t }))} onAuth={completarAuth} />}
       {cancelando && <CancelarModal reserva={cancelando} onClose={() => setCancelando(null)} onConfirmar={confirmarCancelacion} />}
       {especificando && <EspecificacionesModal barco={especificando} onClose={() => setEspecificando(null)} onGuardar={(modelo, notas) => guardarEspecificaciones(especificando.id, modelo, notas)} />}
       {cancelandoProp && <CancelarPropietarioModal reserva={cancelandoProp} onClose={() => setCancelandoProp(null)} onConfirmar={confirmarCancelacionPropietario} />}
       {reclamandoFianza && <ReclamarFianzaModal reserva={reclamandoFianza} onClose={() => setReclamandoFianza(null)} onConfirmar={confirmarReclamarFianza} />}
+      {rechazandoAnuncio && <RechazarAnuncioModal anuncio={rechazandoAnuncio} onClose={() => setRechazandoAnuncio(null)} onConfirmar={(a, motivo) => revisarAnuncio(a, "Rechazado", motivo)} />}
       {resenando && <ResenaModal reserva={resenando} onClose={() => setResenando(null)} onGuardar={guardarResena} />}
       {eliminandoAnuncio && <EliminarAnuncioModal anuncio={eliminandoAnuncio} error={errorEliminarAnuncio} onClose={() => { setEliminandoAnuncio(null); setErrorEliminarAnuncio(""); }} onConfirmar={confirmarEliminarAnuncio} />}
 

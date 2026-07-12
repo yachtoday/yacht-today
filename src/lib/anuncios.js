@@ -95,9 +95,23 @@ export async function listarAnunciosEnRevision() {
   return data.map(filaAItem);
 }
 
-export async function cambiarEstadoAnuncio(id, estado) {
-  const { error } = await supabase.from("anuncios").update({ estado }).eq("id", id);
+export async function cambiarEstadoAnuncio(id, estado, motivoRechazo = null) {
+  const cambios = { estado, motivo_rechazo: estado === "Rechazado" ? motivoRechazo : null };
+  const { error } = await supabase.from("anuncios").update(cambios).eq("id", id);
   if (error) throw error;
+  await notificarAnuncio(estado === "Publicado" ? "aprobado" : "rechazado", id);
+}
+
+/* Avisa por correo del proceso de revisión: al admin cuando hay algo que revisar, y al
+   propietario cuando se le aprueba o se le rechaza (con el motivo). Que falle el correo no
+   debe tumbar la operación: el anuncio ya está guardado, lo peor que pasa es que alguien se
+   entere más tarde. */
+export async function notificarAnuncio(tipo, anuncioId) {
+  try {
+    await supabase.functions.invoke("notificar-anuncio", { body: { tipo, anuncioId } });
+  } catch (err) {
+    console.error("No se ha podido enviar el aviso del anuncio:", err);
+  }
 }
 
 // Sube varias fotos a Storage, bajo la carpeta del propio usuario, y devuelve sus URLs públicas.

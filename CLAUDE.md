@@ -97,6 +97,28 @@ propietarios con personas que quieren disfrutar del mar. Lema: "Alquila el mar".
     bloquea publicar (cliente) con una fecha de caducidad de seguro ya pasada — el único
     chequeo automatizable sin ninguna API externa — y se avisa en rojo al admin si un
     anuncio ya en revisión tiene el seguro caducado.
+11. ✅ **En producción con dominio propio**: la web está publicada en Vercel (proyecto
+    `yacht-today`, auto-deploy en cada push a `master`) y se sirve en
+    **https://yachtoday.com** (y `www`). El dominio se compró en **Namecheap** pero su
+    **DNS está delegado a Vercel** (nameservers `ns1/ns2.vercel-dns.com`), así que los
+    registros se gestionan con `vercel dns add ...`, no desde Namecheap.
+12. ✅ **Correo real a cualquier usuario**: el dominio está **verificado en Resend**
+    (registros DKIM/SPF/DMARC en el DNS de Vercel), así que ya no aplica el modo sandbox
+    — **cualquier persona puede registrarse**, no solo la cuenta de Eric. Los correos de
+    confirmación de Auth salen de `no-reply@yachtoday.com` (SMTP de Resend configurado en
+    Supabase) y los avisos de reserva de `reservas@yachtoday.com`
+    (`supabase/functions/notificar-reserva`). La `site_url` de Supabase Auth apuntaba a
+    `http://localhost:5173` (los enlaces de los correos no habrían funcionado para nadie);
+    ahora es `https://yachtoday.com`, con `localhost` aún permitido para desarrollo.
+
+## Producción: cuidado con las claves largas en paneles web
+`VITE_SUPABASE_ANON_KEY` se pegó a mano en el panel de Vercel y quedó **cortada a mitad
+del JWT** por un salto de línea (llegaban 132 de 208 caracteres): la web publicada no
+cargaba nada de Supabase y mostraba "0 resultados". Regla: los valores largos se suben
+siempre por stdin desde el `.env` (`printf '%s' "$KEY" | vercel env add ...`), nunca
+copiando y pegando. Ojo además: las variables están marcadas como "Sensitive", así que
+`vercel env pull` las devuelve **vacías** — eso no significa que estén mal; la única forma
+de comprobarlas es desplegar e inspeccionar el bundle servido.
 
 ## Revisión de anuncios (rol admin) y por qué está protegido
 Sí existe un "revisor": la cuenta `yachtoday@gmail.com` (`ADMIN_EMAIL` en `src/App.jsx`)
@@ -127,13 +149,12 @@ diferencia de cualquier usuario real de la app).
   navegador directamente — verificado con pruebas reales (`curl` sin sesión intentando
   insertar una reserva "pagada": rechazado por RLS; ver también el trigger de arriba).
 
-## Pendiente: comprar el dominio
-- El dominio `yachtoday.com` (o el que se elija) todavía no está comprado.
-- Mientras tanto, Resend solo envía correos de confirmación a la propia dirección
-  con la que Eric se registró en Resend (modo sandbox, sin dominio verificado).
-- Cuando se compre el dominio: verificarlo en Resend (registros DNS) para poder
-  enviar a cualquier usuario, y usar un email real (`soporte@yachtoday.com`, etc.)
-  en vez del de pruebas `onboarding@resend.dev`.
+## Pendiente: buzón de `soporte@yachtoday.com`
+La app ya publica esa dirección (pie de página y textos del RGPD en `src/App.jsx`), pero
+comprar el dominio **no da buzón de correo**: hoy nadie lee lo que se envíe ahí. Hace falta
+un reenvío a Gmail. Ojo: **Cloudflare Email Routing no sirve** aquí, porque exige poner sus
+propios nameservers y el DNS vive en Vercel; hay que usar algo que funcione solo con
+registros MX/TXT (p. ej. ImprovMX, gratis). Resend envía, pero no recibe.
 
 ## Notas de trabajo
 - El usuario (Eric) es no técnico: explica los pasos de forma sencilla y ve poco a poco.

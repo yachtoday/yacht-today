@@ -31,7 +31,7 @@ Deno.serve(async (req) => {
       method: "POST",
       headers: { "Authorization": `Bearer ${Deno.env.get("RESEND_API_KEY")}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: "Yacht Today <onboarding@resend.dev>",
+        from: "Yacht Today <reservas@yachtoday.com>",
         to: data.user.email,
         subject: `Nueva reserva: ${anuncioNombre}`,
         html: `
@@ -39,7 +39,7 @@ Deno.serve(async (req) => {
           <p><strong>${clienteNombre}</strong> ha reservado <strong>${anuncioNombre}</strong> (${puerto}).</p>
           <p><strong>Cuándo:</strong> ${fecha} · ${detalle}</p>
           <p><strong>Total:</strong> ${total} €</p>
-          <p>Entra en Yacht Today para ver todos los detalles en tu panel.</p>
+          <p>Entra en <a href="https://yachtoday.com">Yacht Today</a> para ver todos los detalles en tu panel.</p>
         `,
       }),
     });

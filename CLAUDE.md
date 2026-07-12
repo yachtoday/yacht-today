@@ -169,6 +169,21 @@ prohíbe captar usuarios hacia otros servicios y le cerrarían la cuenta.
   decirle a un propietario "tengo N personas esperando barco en tu zona". Es la forma
   honesta de fabricar la prueba de demanda que hoy no existe.
 
+## SEO y vista previa de los enlaces
+Hecho (2026-07-12): `title`/`description` reales, canonical, JSON-LD de Organization,
+`public/robots.txt` y `public/sitemap.xml` (ojo: el rewrite de SPA hacía que `/robots.txt`
+devolviese HTML — por eso `vercel.json` excluye los estáticos), y **Open Graph**.
+`propietarios.html` es una **segunda entrada de Vite** (`vite.config.js`): monta la misma
+app de React y solo cambian las `<meta>`, para que al pegar el enlace en Wallapop o
+WhatsApp la tarjeta de vista previa le hable **al dueño del barco** y no al turista.
+
+**Lo que NO está hecho, y es donde vive el SEO de verdad:** la app no tiene URLs propias
+por anuncio ni por zona — todo es estado (`vista`), así que Google solo tiene dos páginas
+que indexar. Para rankear por "alquiler de barcos en Denia" hacen falta rutas reales
+(`/barco/123-quicksilver-675-denia`, `/alquiler-barcos/denia`) y probablemente
+prerenderizado, porque es una SPA. **Es prematuro: sin anuncios no hay contenido que
+indexar.** El SEO va detrás de la oferta, no delante.
+
 ## Nada falso en producción (2026-07-12)
 Al abrir la web al público se quitaron tres cosas que eran de mentira y que en un sitio
 real dejaban de ser inocentes:

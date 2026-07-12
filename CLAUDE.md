@@ -184,6 +184,32 @@ que indexar. Para rankear por "alquiler de barcos en Denia" hacen falta rutas re
 prerenderizado, porque es una SPA. **Es prematuro: sin anuncios no hay contenido que
 indexar.** El SEO va detrás de la oferta, no delante.
 
+## La fianza (leer antes de tocar pagos)
+Hasta el 2026-07-12 **la fianza era una etiqueta vacía**: `crear-pago` cobraba solo
+alquiler + comisión y guardaba `fianza_estado='retenida'`. Al cliente se le decía que se le
+retenía una fianza y al propietario que estaba cubierto, pero **no se retenía ni un
+céntimo**. Se descubrió al hacer la primera reserva real.
+
+Cómo funciona ahora (`supabase/fianza-real.sql`):
+- Al pagar, Stripe **guarda la tarjeta** del cliente (`customer_creation: "always"` +
+  `setup_future_usage: "off_session"`). No se le cobra ni se le bloquea nada, y así se le
+  dice con esas palabras. El webhook guarda `stripe_customer_id` y `stripe_payment_method_id`.
+- Si al terminar el propietario reporta daños, la Edge Function **`cobrar-fianza`** hace un
+  cargo off-session por el importe de la fianza. Va **íntegro al propietario**: sin
+  `application_fee` — la plataforma no se lleva comisión de un destrozo.
+- Estados: `garantizada` (tarjeta guardada, nada cobrado) → `liberada` (visto bueno) o
+  `cobrada` (hubo daños). `retenida` solo existe en las reservas anteriores al cambio, que
+  **no tienen tarjeta guardada y no se les puede cobrar nada**.
+- El servidor exige que quien llama sea el propietario de esa reserva, que el alquiler
+  **ya haya terminado** (`fin_iso < now`), y que no se haya cobrado ya. Verificado en
+  producción el 2026-07-12: cobro real de 100 €, segundo intento rechazado, y rechazo al
+  intentar cobrar una reserva que aún no ha terminado.
+- **Se descartó la retención real en tarjeta** (manual capture): caduca a los 7 días, así
+  que una reserva hecha con tres semanas de antelación se quedaría sin bloqueo. Guardar la
+  tarjeta funciona siempre, a cambio de que el cliente podría cancelarla.
+- La fianza del **material** (SUP y kayak) la fija el propietario en euros; la de los barcos
+  sigue siendo el 20 % del alquiler (`FIANZA_PCT`).
+
 ## Nada falso en producción (2026-07-12)
 Al abrir la web al público se quitaron tres cosas que eran de mentira y que en un sitio
 real dejaban de ser inocentes:

@@ -122,6 +122,24 @@ copiando y pegando. Ojo además: las variables están marcadas como "Sensitive",
 `vercel env pull` las devuelve **vacías** — eso no significa que estén mal; la única forma
 de comprobarlas es desplegar e inspeccionar el bundle servido.
 
+## El circuito de revisión, de principio a fin (verificado en producción 2026-07-12)
+1. Un propietario publica → el anuncio entra `En revisión` y la Edge Function
+   **`notificar-anuncio`** avisa **por correo al admin** (`anuncios@yachtoday.com` →
+   `yachtoday@gmail.com`) con matrícula, seguro, caducidad o fianza. Antes no se avisaba a
+   nadie: el anuncio se quedaba en el limbo hasta que el admin se acordaba de mirar.
+2. El admin lo ve en **Mi panel → "Anuncios pendientes de revisión"**, con los datos en
+   texto y un botón **"Ver documento N"** por archivo. La documentación **no viaja por
+   email**: vive en el bucket privado `documentos-anuncios` y se abre con una URL firmada de
+   2 minutos. Verificado: sin sesión el documento devuelve 400; con el JWT del admin, 200.
+3. **Aprobar** → `Publicado` + correo al propietario ("tu anuncio ya se ve").
+4. **Rechazar** → **obliga a escribir el motivo** (`motivo_rechazo`), que le llega por correo
+   y lo ve en "Mis anuncios". Rechazar a secas dejaba al propietario a oscuras y sin arreglo.
+5. El propietario **corrige y guarda** → vuelve solo a la cola (`Rechazado → En revisión`) y
+   el admin recibe otro aviso. Antes, un rechazo mataba el anuncio para siempre.
+
+Al **borrar** un anuncio (o quitarle una foto al editarlo) se borran también sus archivos de
+Storage — fotos y documentos. Antes no existía política de borrado y todo se acumulaba.
+
 ## Revisión de anuncios (rol admin) y por qué está protegido
 Sí existe un "revisor": la cuenta `yachtoday@gmail.com` (`ADMIN_EMAIL` en `src/App.jsx`)
 ve "Anuncios pendientes de revisión" y los aprueba (`En revisión` → `Publicado`) o los
@@ -129,10 +147,14 @@ rechaza desde la app — RLS en `supabase/admin.sql` le da SELECT/UPDATE global 
 `anuncios`. La política `anuncios_update_propio` (cada propietario puede editar lo suyo)
 no restringía la columna `estado` por sí sola, así que un propietario podía auto-aprobar
 su propio anuncio saltándose la revisión. Se cerró con un trigger `BEFORE UPDATE`
-(`supabase/proteger-revision-anuncios.sql`) que bloquea cualquier cambio de `estado` que
-no venga del email admin, sea cual sea la política RLS que dejó pasar la petición —
-verificado en producción: un `UPDATE ... SET estado` sin JWT de admin es rechazado y la
-fila no se modifica.
+(versión vigente en `supabase/revision-anuncios.sql`) que bloquea cualquier cambio de
+`estado` que no venga del email admin, sea cual sea la política RLS que dejó pasar la
+petición — verificado en producción: un `UPDATE ... SET estado` sin JWT de admin es
+rechazado y la fila no se modifica.
+El trigger permite al propietario **dos** cambios de estado sobre lo suyo, y solo esos:
+`Publicado → En revisión` (ha tocado la documentación: evita el "cambiazo" de cambiarle los
+papeles a un barco ya aprobado) y `Rechazado → En revisión` (lo ha corregido y lo reenvía).
+**Poner algo en `Publicado` sigue siendo exclusivo del admin.**
 Para aprobar un anuncio a mano sin pasar por la app (ej. pruebas):
 `update public.anuncios set estado = 'Publicado' where id = <id>;` ejecutado como
 `postgres` en el SQL Editor de Supabase (ese rol sí se salta RLS y el trigger, a

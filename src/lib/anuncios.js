@@ -35,7 +35,51 @@ export async function crearAnuncio(payload) {
   return filaAItem(data);
 }
 
+export async function actualizarAnuncio(id, cambios) {
+  const { data, error } = await supabase.from("anuncios").update(cambios).eq("id", id).select().single();
+  if (error) throw error;
+  return filaAItem(data);
+}
+
+/* Las fotos se guardan como URL pública completa; Storage necesita la ruta a secas
+   ("<user-id>/<archivo>"). Esto la extrae. Devuelve null si la URL no es de este bucket
+   (por si alguna vez se guardó algo raro), para no intentar borrar lo que no toca. */
+function rutaDeUrlPublica(url, bucket) {
+  const marca = `/storage/v1/object/public/${bucket}/`;
+  const i = String(url).indexOf(marca);
+  return i === -1 ? null : decodeURIComponent(String(url).slice(i + marca.length));
+}
+
+/* Borra los archivos de un anuncio de Storage. No queremos dejar fotos huérfanas ocupando
+   espacio: la fila desaparece y sus archivos también. Requiere las políticas de borrado de
+   supabase/editar-y-borrar-anuncios.sql — sin ellas Storage devuelve 403 en silencio. */
+export async function borrarArchivosDeAnuncio({ fotos, documentos }) {
+  const rutasFotos = (fotos || []).map((u) => rutaDeUrlPublica(u, "fotos-anuncios")).filter(Boolean);
+  if (rutasFotos.length) {
+    const { error } = await supabase.storage.from("fotos-anuncios").remove(rutasFotos);
+    if (error) throw error;
+  }
+  // Los documentos ya se guardan como rutas de Storage, no como URLs.
+  const rutasDocs = (documentos || []).filter(Boolean);
+  if (rutasDocs.length) {
+    const { error } = await supabase.storage.from("documentos-anuncios").remove(rutasDocs);
+    if (error) throw error;
+  }
+}
+
 export async function eliminarAnuncio(id) {
+  // Primero los archivos: si se borrase la fila antes, se perderían sus rutas y las fotos
+  // quedarían para siempre en el bucket sin que nadie sepa a qué anuncio pertenecían.
+  const { data: anuncio } = await supabase.from("anuncios").select("fotos, documentos").eq("id", id).single();
+  if (anuncio) {
+    try {
+      await borrarArchivosDeAnuncio(anuncio);
+    } catch (err) {
+      // Que no se pueda limpiar el bucket no debe impedir que el propietario borre su
+      // anuncio: lo grave es dejarlo publicado, no dejar un archivo suelto.
+      console.error("No se han podido borrar los archivos del anuncio:", err);
+    }
+  }
   const { error } = await supabase.from("anuncios").delete().eq("id", id);
   if (error) throw error;
 }

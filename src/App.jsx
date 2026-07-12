@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabaseClient";
-import { listarAnunciosPublicados, listarMisAnuncios, crearAnuncio, subirFotos, subirDocumentos, urlFirmadaDocumento, eliminarAnuncio, listarAnunciosEnRevision, cambiarEstadoAnuncio } from "./lib/anuncios";
+import { listarAnunciosPublicados, listarMisAnuncios, crearAnuncio, actualizarAnuncio, borrarArchivosDeAnuncio, subirFotos, subirDocumentos, urlFirmadaDocumento, eliminarAnuncio, listarAnunciosEnRevision, cambiarEstadoAnuncio } from "./lib/anuncios";
 import { listarMisReservas, listarReservasRecibidas, actualizarReserva } from "./lib/reservas";
 import { iniciarPago, conectarCobros, cobrarFianza } from "./lib/pagos";
 import {
@@ -838,7 +838,7 @@ function estadoFidelidad(count) {
 }
 
 /* ── Panel de usuario ────────────────────────────────────────────── */
-function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onReclamarFianza, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEliminarAnuncio }) {
+function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onReclamarFianza, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEditarAnuncio, onEliminarAnuncio }) {
   const esCliente = usuario.rol === "cliente" || usuario.rol === "ambas";
   const esProp = usuario.rol === "propietario" || usuario.rol === "ambas";
   const activas = reservas.filter((r) => r.estado !== "finalizada").slice().sort((a, b) => new Date(a.inicioISO) - new Date(b.inicioISO));
@@ -993,6 +993,7 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
                     <div><p className="li-nombre">{b.nombre}</p><p className="li-sub">{etiqueta(b)} · {eur(precioBase(b))}/{unidad(b)}</p></div>
                     <div className="li-acciones">
                       <span className="estado revision">{b.estado}</span>
+                      <button className="btn-sec sm" onClick={() => onEditarAnuncio(b)}>Editar</button>
                       <button className="acc" title="Eliminar anuncio" onClick={() => onEliminarAnuncio(b)}><Trash2 size={14} /></button>
                     </div>
                   </div>
@@ -1364,37 +1365,50 @@ function AyudaCancelaciones({ usuario, onIrPanel, onAbrirAuth }) {
 
 /* ── Publicar ────────────────────────────────────────────────────── */
 const PATRON_OPTS = [["No, sin patrón", "no"], ["Opcional", "opcional"], ["Siempre con patrón", "incluido"]];
-function Publicar({ usuario, onDone, onPublicado }) {
-  const [clase, setClase] = useState("barco");
-  const [nombre, setNombre] = useState("");
-  const [tipo, setTipo] = useState(TIPOS[0]);
-  const [act, setAct] = useState(ACTIVIDADES[0]);
-  const [matTipo, setMatTipo] = useState(MATERIALES[0]);
-  const [zonaPub, setZonaPub] = useState(ZONAS[1]);
-  const [puerto, setPuerto] = useState("");
-  const [plazas, setPlazas] = useState("");
-  const [duracion, setDuracion] = useState("");
-  const [eslora, setEslora] = useState("");
-  const [potencia, setPotencia] = useState("");
-  const [lista, setLista] = useState("7ª");
-  const [patron, setPatron] = useState("opcional");
-  const [horaPrecio, setHoraPrecio] = useState("");
-  const [precio, setPrecio] = useState(350);
-  const [descripcion, setDescripcion] = useState("");
+/* Publicar y editar son el mismo formulario: si llega `anuncio`, arranca relleno con sus
+   datos y al guardar actualiza esa fila en vez de crear una nueva. La clase (barco /
+   experiencia / material) no se puede cambiar al editar: cambiaría qué campos existen y qué
+   documentación hace falta — para eso es más limpio borrar el anuncio y hacer otro. */
+function Publicar({ usuario, anuncio, onDone, onPublicado }) {
+  const editando = !!anuncio;
+  const [clase, setClase] = useState(anuncio?.clase || "barco");
+  const [nombre, setNombre] = useState(anuncio?.nombre || "");
+  const [tipo, setTipo] = useState(anuncio?.clase === "barco" && anuncio?.tipo ? anuncio.tipo : TIPOS[0]);
+  const [act, setAct] = useState(anuncio?.actividad || ACTIVIDADES[0]);
+  const [matTipo, setMatTipo] = useState(anuncio?.clase === "material" && anuncio?.tipo ? anuncio.tipo : MATERIALES[0]);
+  const [zonaPub, setZonaPub] = useState(anuncio?.zona || ZONAS[1]);
+  const [puerto, setPuerto] = useState(anuncio?.puerto || "");
+  const [plazas, setPlazas] = useState(anuncio?.plazas ?? "");
+  const [duracion, setDuracion] = useState(anuncio?.duracion || "");
+  const [eslora, setEslora] = useState(anuncio?.eslora ?? "");
+  const [potencia, setPotencia] = useState(anuncio?.potencia ?? "");
+  const [lista, setLista] = useState(anuncio?.lista || "7ª");
+  const [patron, setPatron] = useState(anuncio?.patron || "opcional");
+  const [horaPrecio, setHoraPrecio] = useState(anuncio?.hora ?? "");
+  const [precio, setPrecio] = useState(anuncio ? (anuncio.clase === "experiencia" ? anuncio.persona : anuncio.dia) || 0 : 350);
+  const [descripcion, setDescripcion] = useState(anuncio?.descripcion || "");
   const [fotos, setFotos] = useState([]);
+  /* Al editar, las fotos que ya existen son URLs subidas; las nuevas son archivos del disco.
+     Se llevan por separado y al guardar se juntan. Las que el propietario quite aquí se
+     borran de Storage: no queremos fotos huérfanas ocupando espacio. */
+  const [fotosExistentes, setFotosExistentes] = useState(anuncio?.fotos || []);
+  const [fotosBorradas, setFotosBorradas] = useState([]);
   const fotosInputRef = useRef(null);
   const [documentos, setDocumentos] = useState([]);
+  const [documentosExistentes, setDocumentosExistentes] = useState(anuncio?.documentos || []);
+  const [documentosBorrados, setDocumentosBorrados] = useState([]);
   const documentosInputRef = useRef(null);
-  const [matricula, setMatricula] = useState("");
-  const [poliza, setPoliza] = useState("");
-  const [caducidadSeguro, setCaducidadSeguro] = useState("");
-  const [fianzaMat, setFianzaMat] = useState("");
+  const [matricula, setMatricula] = useState(anuncio?.matricula || "");
+  const [poliza, setPoliza] = useState(anuncio?.poliza || "");
+  const [caducidadSeguro, setCaducidadSeguro] = useState(anuncio?.caducidad_seguro || "");
+  const [fianzaMat, setFianzaMat] = useState(anuncio?.fianza ?? "");
   const hoyISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
-  const [avisoHoras, setAvisoHoras] = useState("");
-  const [equipoSel, setEquipoSel] = useState([]);
-  const [equipoCustom, setEquipoCustom] = useState([]);
+  const [avisoHoras, setAvisoHoras] = useState(anuncio?.aviso_minimo_horas ?? "");
+  const [equipoSel, setEquipoSel] = useState(() => (anuncio?.equipamiento || []).filter((e) => (EQUIPAMIENTO_TIPICO[anuncio?.clase] || []).includes(e)));
+  const [equipoCustom, setEquipoCustom] = useState(() => (anuncio?.equipamiento || []).filter((e) => !(EQUIPAMIENTO_TIPICO[anuncio?.clase] || []).includes(e)));
   const [equipoNuevo, setEquipoNuevo] = useState("");
-  const [consiento, setConsiento] = useState(false);
+  // Al editar ya consintió al publicar; solo se le vuelve a pedir si cambia la documentación.
+  const [consiento, setConsiento] = useState(editando);
   const [enviado, setEnviado] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [errorPublicar, setErrorPublicar] = useState("");
@@ -1417,7 +1431,14 @@ function Publicar({ usuario, onDone, onPublicado }) {
     setDocumentos((p) => [...p, ...nuevos].slice(0, 4));
   };
   const quitarDocumento = (i) => setDocumentos((p) => p.filter((_, idx) => idx !== i));
-  useEffect(() => setEquipoSel([]), [clase]);
+  /* Al cambiar de clase, el equipamiento marcado ya no aplica. Pero este efecto también
+     corre al montar, y al editar borraría el equipamiento que acabamos de rellenar: por eso
+     se salta la primera vez. */
+  const primeraVez = useRef(true);
+  useEffect(() => {
+    if (primeraVez.current) { primeraVez.current = false; return; }
+    setEquipoSel([]);
+  }, [clase]);
   const agregarEquipoCustom = () => {
     const v = equipoNuevo.trim();
     if (v && !equipoCustom.includes(v)) setEquipoCustom((p) => [...p, v]);
@@ -1433,10 +1454,26 @@ function Publicar({ usuario, onDone, onPublicado }) {
      alquiler de 15 € serían 3 €, que no cubren perder el material. */
   /* Al menos una foto: un anuncio sin fotos sale con un dibujo genérico y no lo reserva
      nadie. Se permitía publicar sin ninguna y así se publicó el primer anuncio real. */
-  const faltanFotos = fotos.length === 0;
+  const faltanFotos = fotos.length + fotosExistentes.length === 0;
   const faltaDocumentacion = faltanFotos || (esMat
     ? !(+fianzaMat > 0)
     : !consiento || !poliza.trim() || !caducidadSeguro || seguroCaducado || (!esExp && !matricula.trim()));
+
+  /* Si el propietario toca la documentación de un anuncio YA PUBLICADO, vuelve a revisión.
+     Sin esto, alguien podría publicar un barco correcto, esperar a que se lo aprueben y
+     cambiarle después la matrícula, la póliza o los papeles — el "cambiazo". El precio, la
+     descripción o las fotos sí se pueden cambiar sin volver a revisión.
+     En el material se vigila la fianza por lo mismo: publicar con 50 € y luego subirla a
+     5.000 € sería colar un cargo enorme por la puerta de atrás. */
+  const docsCambiados = editando && anuncio.estado === "Publicado" && (
+    esMat
+      ? Number(fianzaMat) !== Number(anuncio.fianza ?? 0)
+      : matricula.trim() !== (anuncio.matricula || "")
+        || poliza.trim() !== (anuncio.poliza || "")
+        || caducidadSeguro !== (anuncio.caducidad_seguro || "")
+        || documentos.length > 0
+        || documentosBorrados.length > 0
+  );
 
   const publicar = () => {
     if (faltaDocumentacion) return;
@@ -1444,46 +1481,78 @@ function Publicar({ usuario, onDone, onPublicado }) {
       setEnviando(true);
       setErrorPublicar("");
       try {
-        const urlsFotos = fotos.length ? await subirFotos(usuario.id, fotos) : [];
+        const urlsNuevas = fotos.length ? await subirFotos(usuario.id, fotos) : [];
         /* El material no tiene seguro ni matrícula: no se le sube documentación ninguna. */
-        const rutasDocumentos = !esMat && documentos.length ? await subirDocumentos(usuario.id, documentos) : [];
+        const rutasNuevas = !esMat && documentos.length ? await subirDocumentos(usuario.id, documentos) : [];
+        const todasLasFotos = [...fotosExistentes, ...urlsNuevas];
+        const todosLosDocs = esMat ? [] : [...documentosExistentes, ...rutasNuevas];
+
         const base = {
           clase, propietario_id: usuario.id,
           nombre: nombre.trim() || (esExp ? "Tu experiencia" : esMat ? "Tu material" : "Tu barco"),
-          puerto: puerto.trim(), zona: zonaPub, descripcion: descripcion.trim(), fotos: urlsFotos,
-          estado: "En revisión",
+          puerto: puerto.trim(), zona: zonaPub, descripcion: descripcion.trim(), fotos: todasLasFotos,
           aviso_minimo_horas: +avisoHoras > 0 ? +avisoHoras : null,
           equipamiento: [...equipoSel, ...equipoCustom],
         };
-        const conSeguro = { poliza: poliza.trim(), caducidad_seguro: caducidadSeguro, documentos: rutasDocumentos };
-        const payload = esExp
+        const conSeguro = { poliza: poliza.trim(), caducidad_seguro: caducidadSeguro, documentos: todosLosDocs };
+        const propio = esExp
           ? { ...base, ...conSeguro, actividad: act, plazas: +plazas || null, duracion: duracion.trim(), persona: precio, anfitrion: usuario.nombre }
           : esMat
             ? { ...base, tipo: matTipo, hora: +horaPrecio || null, dia: precio, fianza: +fianzaMat }
             : { ...base, ...conSeguro, tipo, eslora: +eslora || null, plazas: +plazas || null, potencia: +potencia || null, lista, patron, hora: +horaPrecio || null, dia: precio, matricula: matricula.trim() };
-        const creado = await crearAnuncio(payload);
-        onPublicado(creado);
+
+        let guardado;
+        if (editando) {
+          /* Solo se toca `estado` para bajarlo a revisión si ha cambiado la documentación.
+             Subirlo a "Publicado" es cosa del admin y el trigger de la base de datos lo
+             impide igualmente (supabase/editar-y-borrar-anuncios.sql). */
+          guardado = await actualizarAnuncio(anuncio.id, { ...propio, ...(docsCambiados ? { estado: "En revisión" } : {}) });
+          // Las fotos y documentos que quitó ya no los referencia nadie: fuera de Storage.
+          if (fotosBorradas.length || documentosBorrados.length) {
+            await borrarArchivosDeAnuncio({ fotos: fotosBorradas, documentos: documentosBorrados }).catch(console.error);
+          }
+        } else {
+          guardado = await crearAnuncio({ ...propio, estado: "En revisión" });
+        }
+        onPublicado(guardado);
         setEnviado(true);
       } catch (err) {
-        setErrorPublicar(err.message || "No se ha podido publicar. Inténtalo de nuevo.");
+        setErrorPublicar(err.message || "No se ha podido guardar. Inténtalo de nuevo.");
       } finally {
         setEnviando(false);
       }
     });
   };
 
-  if (enviado) return (<div className="publicar"><div className="ok centro"><div className="ok-icon"><Check size={28} strokeWidth={3} /></div><h3 className="serif">¡Recibido!</h3><p>Documentación recibida. Un revisor de Yacht Today la comprobará antes de publicarlo. Lo tienes en <strong>Mis anuncios</strong>.</p><button className="btn-primario ancho" onClick={onDone}>Ir a mi panel</button></div></div>);
+  if (enviado) {
+    const vuelveARevision = !editando || docsCambiados;
+    return (
+      <div className="publicar"><div className="ok centro">
+        <div className="ok-icon"><Check size={28} strokeWidth={3} /></div>
+        <h3 className="serif">{editando ? "Cambios guardados" : "¡Recibido!"}</h3>
+        <p>{vuelveARevision
+          ? "Un revisor de Yacht Today comprobará la documentación antes de publicarlo. Lo tienes en Mis anuncios."
+          : "Tu anuncio ya se ve actualizado en Yacht Today."}</p>
+        <button className="btn-primario ancho" onClick={onDone}>Ir a mi panel</button>
+      </div></div>
+    );
+  }
 
   return (
     <div className="publicar">
       <span className="eyebrow">Para propietarios</span>
-      <h1 className="serif pub-titulo">Pon lo tuyo a trabajar</h1>
-      <p className="pub-sub">Publicar es gratis. Los gastos de servicio los paga quien alquila; tú recibes tu tarifa íntegra y sumas para el programa "Cuida tu Barco".</p>
-      <div className="clase-pub">
-        {[["barco", "Un barco", Ship], ["experiencia", "Una experiencia", Sparkles], ["material", "SUP o kayak", Wind]].map(([v, t, Ic]) => (
-          <button key={v} className={clase === v ? "cp on" : "cp"} onClick={() => setClase(v)}><Ic size={18} /> {t}</button>
-        ))}
-      </div>
+      <h1 className="serif pub-titulo">{editando ? "Editar tu anuncio" : "Pon lo tuyo a trabajar"}</h1>
+      <p className="pub-sub">{editando
+        ? "Cambia lo que quieras. Si tocas la documentación (matrícula, seguro o papeles), el anuncio volverá a revisión antes de verse otra vez."
+        : 'Publicar es gratis. Los gastos de servicio los paga quien alquila; tú recibes tu tarifa íntegra y sumas para el programa "Cuida tu Barco".'}</p>
+      {!editando && (
+        <div className="clase-pub">
+          {[["barco", "Un barco", Ship], ["experiencia", "Una experiencia", Sparkles], ["material", "SUP o kayak", Wind]].map(([v, t, Ic]) => (
+            <button key={v} className={clase === v ? "cp on" : "cp"} onClick={() => setClase(v)}><Ic size={18} /> {t}</button>
+          ))}
+        </div>
+      )}
+      {editando && docsCambiados && <p className="mini-nota mini-nota-error">Has cambiado la documentación: al guardar, el anuncio dejará de verse hasta que un revisor lo apruebe.</p>}
       <div className="pub-grid">
         <div className="form">
           {esExp ? (
@@ -1511,13 +1580,25 @@ function Publicar({ usuario, onDone, onPublicado }) {
           )}
           <label className="field"><span>Descripción</span><textarea rows={3} value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Cuenta qué lo hace especial…" /></label>
           <input ref={fotosInputRef} type="file" accept="image/*" multiple hidden onChange={agregarFotos} />
-          <button type="button" className="fotos-drop" onClick={() => fotosInputRef.current?.click()}><Plus size={16} /> {fotos.length ? "Añadir más fotos" : "Añadir fotos (obligatorio)"}</button>
+          <button type="button" className="fotos-drop" onClick={() => fotosInputRef.current?.click()}><Plus size={16} /> {fotos.length + fotosExistentes.length ? "Añadir más fotos" : "Añadir fotos (obligatorio)"}</button>
           {faltanFotos && <p className="mini-nota">Sube al menos una foto. Sin fotos, tu anuncio sale con un dibujo genérico y prácticamente nadie lo reserva.</p>}
-          {fotos.length > 0 && (
+          {(fotosExistentes.length > 0 || fotos.length > 0) && (
             <div className="fotos-previews">
+              {/* Las que ya estaban subidas. Al quitarlas se apuntan para borrarlas de
+                  Storage cuando guarde: si no, quedarían ocupando espacio sin que nadie
+                  las use. */}
+              {fotosExistentes.map((url, i) => (
+                <div key={url} className="fotos-preview">
+                  <img src={url} alt={`Foto ${i + 1}`} />
+                  <button type="button" className="fotos-preview-x" onClick={() => {
+                    setFotosExistentes((p) => p.filter((u) => u !== url));
+                    setFotosBorradas((p) => [...p, url]);
+                  }}><X size={12} /></button>
+                </div>
+              ))}
               {previews.map((src, i) => (
                 <div key={src} className="fotos-preview">
-                  <img src={src} alt={`Foto ${i + 1}`} />
+                  <img src={src} alt={`Foto nueva ${i + 1}`} />
                   <button type="button" className="fotos-preview-x" onClick={() => quitarFoto(i)}><X size={12} /></button>
                 </div>
               ))}
@@ -1560,7 +1641,7 @@ function Publicar({ usuario, onDone, onPublicado }) {
                 <span>Fianza en euros</span>
                 <input type="number" min={0} value={fianzaMat} onChange={(e) => setFianzaMat(e.target.value)} placeholder="300" />
               </label>
-              <p className="mini-nota">Se le retiene al cliente al reservar y se le devuelve cuando tú das el alquiler por terminado. Pon lo que te costaría reponer el material si te lo pierden o te lo rompen, no un porcentaje del alquiler.</p>
+              <p className="mini-nota">No se le cobra al cliente: guardamos su tarjeta y solo se le cobra esta cantidad si al terminar dices que hubo daños o no te lo devolvió. Pon lo que te costaría reponer el material, no un porcentaje del alquiler.</p>
             </>
           ) : (
             <>
@@ -1572,9 +1653,15 @@ function Publicar({ usuario, onDone, onPublicado }) {
               </Fila>
               {seguroCaducado && <p className="mini-nota mini-nota-error">Esa fecha ya ha pasado — necesitamos la caducidad de un seguro en vigor.</p>}
               <input ref={documentosInputRef} type="file" accept="image/*,application/pdf" multiple hidden onChange={agregarDocumentos} />
-              <button type="button" className="fotos-drop" onClick={() => documentosInputRef.current?.click()}><Plus size={16} /> {documentos.length ? "Añadir más documentos" : "Adjuntar documentación (matrícula, póliza…)"}</button>
-              {documentos.length > 0 && (
+              <button type="button" className="fotos-drop" onClick={() => documentosInputRef.current?.click()}><Plus size={16} /> {documentos.length + documentosExistentes.length ? "Añadir más documentos" : "Adjuntar documentación (matrícula, póliza…)"}</button>
+              {(documentosExistentes.length > 0 || documentos.length > 0) && (
                 <div className="equipo-chips">
+                  {documentosExistentes.map((ruta) => (
+                    <span key={ruta} className="equipo-chip"><FileText size={12} /> {ruta.split("/").pop()} <button type="button" onClick={() => {
+                      setDocumentosExistentes((p) => p.filter((r) => r !== ruta));
+                      setDocumentosBorrados((p) => [...p, ruta]);
+                    }}><X size={12} /></button></span>
+                  ))}
                   {documentos.map((f, i) => (
                     <span key={`${f.name}-${i}`} className="equipo-chip"><FileText size={12} /> {f.name} <button type="button" onClick={() => quitarDocumento(i)}><X size={12} /></button></span>
                   ))}
@@ -1587,9 +1674,10 @@ function Publicar({ usuario, onDone, onPublicado }) {
 
           {errorPublicar && <p className="auth-error">{errorPublicar}</p>}
           <button className="btn-primario ancho" onClick={publicar} disabled={faltaDocumentacion || verificacion === "verificando" || enviando}>
-            {verificacion === "verificando" || enviando ? "Enviando…" : "Publicar"}
+            {verificacion === "verificando" || enviando ? "Guardando…" : editando ? "Guardar cambios" : "Publicar"}
           </button>
-          {faltaDocumentacion && <p className="mini-nota">{esMat ? "Pon una fianza mayor que cero para poder publicar." : "Completa la documentación y acepta el tratamiento de datos para poder publicar."}</p>}
+          {editando && <button className="btn-sec ancho" onClick={onDone}>Cancelar</button>}
+          {faltaDocumentacion && <p className="mini-nota">{esMat ? "Pon una fianza mayor que cero y al menos una foto para poder guardar." : "Completa la documentación, sube al menos una foto y acepta el tratamiento de datos."}</p>}
         </div>
         <aside className="ganancias">
           <span className="eyebrow claro">Con precio de {eur(precio)}/{uni}</span>
@@ -1648,6 +1736,7 @@ export default function App() {
   const [especificando, setEspecificando] = useState(null);
   const [cancelandoProp, setCancelandoProp] = useState(null);
   const [reclamandoFianza, setReclamandoFianza] = useState(null);
+  const [editandoAnuncio, setEditandoAnuncio] = useState(null);
   const [avisosPropietario, setAvisosPropietario] = useState(0);
   const [resenando, setResenando] = useState(null);
   const [eliminandoAnuncio, setEliminandoAnuncio] = useState(null);
@@ -1918,7 +2007,22 @@ export default function App() {
       {vista === "mantenimiento" && <SpenMechanics />}
       {(vista === "contacto" || vista === "faq" || vista === "cancelaciones") && <Ayuda seccion={vista} onCambiar={ir} usuario={usuario} onIrPanel={() => ir("panel")} onAbrirAuth={abrirAuth} />}
       {vista === "publicar" && usuario && <Publicar usuario={usuario} onDone={() => ir("panel")} onPublicado={(b) => setMisBarcos((p) => [b, ...p])} />}
-      {vista === "panel" && usuario && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={(a) => revisarAnuncio(a, "Rechazado")} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEliminarAnuncio={setEliminandoAnuncio} />)}
+      {/* `key` fuerza a React a montar el formulario de cero al cambiar de anuncio: si no,
+          reutilizaría el estado del anterior y saldrían los datos del barco equivocado. */}
+      {vista === "editar" && usuario && editandoAnuncio && (
+        <Publicar
+          key={editandoAnuncio.id}
+          usuario={usuario}
+          anuncio={editandoAnuncio}
+          onDone={() => { setEditandoAnuncio(null); ir("panel"); }}
+          onPublicado={(b) => {
+            setMisBarcos((p) => p.map((x) => (x.id === b.id ? b : x)));
+            // Si volvió a revisión, desaparece de la web pública hasta que se apruebe.
+            setAnuncios((p) => (b.estado === "Publicado" ? p.map((x) => (x.id === b.id ? b : x)) : p.filter((x) => x.id !== b.id)));
+          }}
+        />
+      )}
+      {vista === "panel" && usuario && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={(a) => revisarAnuncio(a, "Rechazado")} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEditarAnuncio={(b) => { setEditandoAnuncio(b); ir("editar"); }} onEliminarAnuncio={setEliminandoAnuncio} />)}
 
       {auth && <AuthModal tab={auth.tab} rolPre={auth.rolPre} onClose={() => setAuth(null)} onCambiarTab={(t) => setAuth((a) => ({ ...a, tab: t }))} onAuth={completarAuth} />}
       {cancelando && <CancelarModal reserva={cancelando} onClose={() => setCancelando(null)} onConfirmar={confirmarCancelacion} />}

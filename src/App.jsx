@@ -928,7 +928,7 @@ function estadoFidelidad(count) {
 }
 
 /* ── Panel de usuario ────────────────────────────────────────────── */
-function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onReclamarFianza, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEditarAnuncio, onEliminarAnuncio, onAdmin }) {
+function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onReclamarFianza, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEditarAnuncio, onEliminarAnuncio }) {
   const esCliente = usuario.rol === "cliente" || usuario.rol === "ambas";
   const esProp = usuario.rol === "propietario" || usuario.rol === "ambas";
   const activas = reservas.filter((r) => r.estado !== "finalizada").slice().sort((a, b) => new Date(a.inicioISO) - new Date(b.inicioISO));
@@ -955,14 +955,6 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
 
       <main className="panel-main">
         <div className="panel-cab"><h1 className="serif">{saludo()}, {usuario.nombre.split(" ")[0]} 👋</h1><button className="btn-primario auto" onClick={onExplorar}><Plus size={16} /> Nueva reserva</button></div>
-
-        {esAdmin && (
-          <button className="admin-acceso" onClick={onAdmin}>
-            <ShieldCheck size={17} />
-            <span>Panel de administración{anunciosRevision.length > 0 ? ` · ${anunciosRevision.length} por revisar` : ""}</span>
-            <ChevronRight size={16} />
-          </button>
-        )}
 
         {esCliente && (
           <section className="panel-sec">
@@ -1124,17 +1116,22 @@ const Vacio = ({ txt, cta, onCta, primario }) => (<div className="mini-vacio"><p
    favoritos de Eric — mezclando su cuenta de cliente con su trabajo de revisor. Aquí tiene
    su sitio propio, y a la vista lo único que de verdad importa: qué está esperando y desde
    cuándo, porque un propietario que espera dos días se va. */
-function PanelAdmin({ anunciosRevision, anuncios, onAprobar, onRechazar, onVerDocumento, onVolver }) {
+function PanelAdmin({ anunciosRevision, anuncios, onAprobar, onRechazar, onVerDocumento, onExplorar, onSalir }) {
   const hoy = new Date().toISOString().slice(0, 10);
   const diasEsperando = (a) => Math.floor((Date.now() - new Date(a.created_at).getTime()) / 86400000);
 
   return (
     <div className="admin">
-      <button className="volver" onClick={onVolver}><ArrowLeft size={17} /> Volver a mi panel</button>
       <div className="ficha-head">
         <h1 className="serif ficha-titulo">Administración</h1>
+        <div className="ficha-acciones">
+          <button className="acc" onClick={onExplorar}><Search size={15} /> Ver la web</button>
+          <button className="acc" onClick={onSalir}><LogOut size={15} /> Cerrar sesión</button>
+        </div>
       </div>
-      <p className="ficha-sub">Cuenta de revisor · {ADMIN_EMAIL}</p>
+      {/* Esta cuenta es solo de revisor: no publica anuncios ni cobra. Los barcos de Eric
+          viven en su cuenta de propietario, como los de cualquier otro. */}
+      <p className="ficha-sub">Cuenta de revisor · {ADMIN_EMAIL} · esta cuenta no publica anuncios</p>
 
       <div className="admin-cifras">
         <div className="admin-cifra"><span className="admin-num">{anunciosRevision.length}</span><span className="admin-lab">esperando revisión</span></div>
@@ -2125,8 +2122,9 @@ export default function App() {
           <button onClick={() => { setClaseReset("barco"); setSoloPatron(false); ir("explorar"); }}>Embarcaciones</button>
           <button onClick={() => { setClaseReset("experiencia"); ir("explorar"); }}>Experiencias</button>
           <button onClick={() => ir("ventajas")}>Ventajas</button>
-          <button onClick={irPublicar}>Publica lo tuyo</button>
-          {cargandoSesion ? null : usuario ? (<><button className="perfil-link" onClick={() => ir("panel")}><span className="avatar-mini">{iniciales(usuario.nombre)}</span> Mi panel</button><button className="btn-salir" onClick={cerrarSesion}><LogOut size={16} /></button></>)
+          {/* La cuenta de revisión no publica: ofrecerle "Publica lo tuyo" no tiene sentido. */}
+          {!esAdmin && <button onClick={irPublicar}>Publica lo tuyo</button>}
+          {cargandoSesion ? null : usuario ? (<><button className="perfil-link" onClick={() => ir("panel")}><span className="avatar-mini">{iniciales(usuario.nombre)}</span> {esAdmin ? "Administración" : "Mi panel"}</button><button className="btn-salir" onClick={cerrarSesion}><LogOut size={16} /></button></>)
             : <button className="btn-entrar" onClick={() => abrirAuth("entrar")}>Entrar</button>}
         </nav>
         <button className="hamburguesa" onClick={() => setMenu((m) => !m)}>{menu ? <X size={22} /> : <Menu size={22} />}</button>
@@ -2232,17 +2230,21 @@ export default function App() {
           }}
         />
       )}
-      {vista === "panel" && usuario && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={setRechazandoAnuncio} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEditarAnuncio={(b) => { setEditandoAnuncio(b); ir("editar"); }} onEliminarAnuncio={setEliminandoAnuncio} onAdmin={() => ir("admin")} />)}
-      {vista === "admin" && usuario && esAdmin && (
+      {/* La cuenta de revisión no publica ni reserva: su panel es el de administración, sin
+          "Mis anuncios" ni "Cobros" mezclados. Los barcos de Eric viven en su cuenta de
+          propietario, como los de cualquiera. */}
+      {vista === "panel" && usuario && esAdmin && (
         <PanelAdmin
           anunciosRevision={anunciosRevision}
           anuncios={anuncios}
           onAprobar={(a) => revisarAnuncio(a, "Publicado")}
           onRechazar={setRechazandoAnuncio}
           onVerDocumento={verDocumento}
-          onVolver={() => ir("panel")}
+          onExplorar={() => { setClaseReset("todo"); ir("explorar"); }}
+          onSalir={cerrarSesion}
         />
       )}
+      {vista === "panel" && usuario && !esAdmin && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={setRechazandoAnuncio} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEditarAnuncio={(b) => { setEditandoAnuncio(b); ir("editar"); }} onEliminarAnuncio={setEliminandoAnuncio} />)}
 
       {auth && <AuthModal tab={auth.tab} rolPre={auth.rolPre} onClose={() => setAuth(null)} onCambiarTab={(t) => setAuth((a) => ({ ...a, tab: t }))} onAuth={completarAuth} />}
       {cancelando && <CancelarModal reserva={cancelando} onClose={() => setCancelando(null)} onConfirmar={confirmarCancelacion} />}

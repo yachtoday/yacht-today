@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabaseClient";
 import { listarAnunciosPublicados, listarMisAnuncios, crearAnuncio, actualizarAnuncio, borrarArchivosDeAnuncio, notificarAnuncio, subirFotos, subirDocumentos, urlFirmadaDocumento, eliminarAnuncio, listarAnunciosEnRevision, cambiarEstadoAnuncio } from "./lib/anuncios";
-import { listarMisReservas, listarReservasRecibidas, actualizarReserva } from "./lib/reservas";
+import { listarMisReservas, listarReservasRecibidas, actualizarReserva, notificarCancelacion } from "./lib/reservas";
 import { listarFavoritos, anadirFavorito, quitarFavorito } from "./lib/favoritos";
 import { iniciarPago, conectarCobros, cobrarFianza } from "./lib/pagos";
 import {
@@ -796,6 +796,13 @@ function EspecificacionesModal({ barco, onClose, onGuardar }) {
 }
 
 /* ── Modal cancelación por el propietario ────────────────────────── */
+const MOTIVO_TXT = {
+  averia: "Una avería mecánica impide salir.",
+  meteo: "Emergencia meteorológica confirmada por AEMET.",
+  salud: "Una enfermedad o emergencia personal del propietario.",
+  otro: null,
+};
+
 function CancelarPropietarioModal({ reserva, onClose, onConfirmar }) {
   const [motivo, setMotivo] = useState("averia");
   const [comprobando, setComprobando] = useState(false);
@@ -839,7 +846,9 @@ function CancelarPropietarioModal({ reserva, onClose, onConfirmar }) {
           ? <p className="mini-nota">Este motivo se considera justificado: no afecta a tu reputación.</p>
           : <p className="aviso-fuerte">Este motivo no se considera justificado: recibirás un aviso que reduce tu visibilidad y te aleja del distintivo Propietario Premium.</p>}
         <button className="btn-primario ancho" onClick={onClose}>Volver, no cancelar</button>
-        <button className="btn-cancelar ancho" disabled={bloqueado} onClick={() => onConfirmar(justificado)}>Cancelar reserva</button>
+        {/* El motivo viaja al correo del cliente: le estamos tirando los planes, lo menos que
+            merece es saber por qué. "Otro" no dice nada, así que ahí no se manda motivo. */}
+        <button className="btn-cancelar ancho" disabled={bloqueado} onClick={() => onConfirmar(justificado, MOTIVO_TXT[motivo] || null)}>Cancelar reserva</button>
       </div>
     </div>
   );
@@ -2044,8 +2053,11 @@ export default function App() {
     });
   };
   const confirmarCancelacion = () => {
-    actualizarReserva(cancelando.id, { estado: "cancelada" }).catch(console.error);
-    setReservas((p) => p.filter((r) => r.id !== cancelando.id));
+    const id = cancelando.id;
+    actualizarReserva(id, { estado: "cancelada" })
+      .then(() => notificarCancelacion(id, "cliente"))
+      .catch(console.error);
+    setReservas((p) => p.filter((r) => r.id !== id));
     setCancelando(null);
   };
   const finalizarReservaRecibida = (id) => {
@@ -2070,9 +2082,14 @@ export default function App() {
     setReservas((p) => p.map((r) => (r.id === resenando.id ? { ...r, estado: "finalizada", resena: { estrellas, comentario } } : r)));
     setResenando(null);
   };
-  const confirmarCancelacionPropietario = (justificado) => {
-    actualizarReserva(cancelandoProp.id, { estado: "cancelada" }).catch(console.error);
-    setReservasRecibidas((p) => p.filter((r) => r.id !== cancelandoProp.id));
+  const confirmarCancelacionPropietario = (justificado, motivo = null) => {
+    const id = cancelandoProp.id;
+    /* Al cliente le acaban de tirar los planes: se le avisa por correo, con el motivo si lo
+       hay. Antes no se enteraba, y podía plantarse en el puerto. */
+    actualizarReserva(id, { estado: "cancelada", motivo_cancelacion: motivo })
+      .then(() => notificarCancelacion(id, "propietario", motivo))
+      .catch(console.error);
+    setReservasRecibidas((p) => p.filter((r) => r.id !== id));
     if (!justificado) setAvisosPropietario((p) => p + 1);
     setCancelandoProp(null);
   };

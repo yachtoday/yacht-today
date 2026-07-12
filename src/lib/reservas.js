@@ -28,3 +28,14 @@ export async function actualizarReserva(id, cambios) {
   const { error } = await supabase.from("reservas").update(cambios).eq("id", id);
   if (error) throw error;
 }
+
+/* Avisa por correo a la OTRA parte de que la reserva se ha cancelado. Antes no se avisaba a
+   nadie: si el propietario cancelaba, el cliente podía plantarse en el puerto sin saberlo.
+   Que falle el correo no debe tumbar la cancelación, que ya está hecha. */
+export async function notificarCancelacion(reservaId, quien, motivo = null) {
+  try {
+    await supabase.functions.invoke("notificar-cancelacion", { body: { reservaId, quien, motivo } });
+  } catch (err) {
+    console.error("No se ha podido avisar de la cancelación:", err);
+  }
+}

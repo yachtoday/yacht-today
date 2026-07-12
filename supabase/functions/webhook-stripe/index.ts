@@ -69,12 +69,16 @@ Deno.serve(async (req) => {
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") },
       body: JSON.stringify({
         propietarioId: m.propietarioId,
+        clienteId: m.clienteId, // sin esto el cliente no recibia NINGUN correo de su reserva
         anuncioNombre: m.barco,
         clienteNombre: m.clienteNombre,
         puerto: m.puerto,
         inicioISO: m.inicioISO,
         detalle: m.detalle,
+        subtotal: Number(m.subtotal),
+        servicio: Number(m.servicio),
         total: Number(m.total),
+        fianza: Number(m.fianza),
       }),
     }).catch(console.error);
   }

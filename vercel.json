@@ -2,6 +2,6 @@
   "cleanUrls": true,
   "rewrites": [
     { "source": "/propietarios", "destination": "/propietarios.html" },
-    { "source": "/((?!assets/|robots.txt|sitemap.xml|og-).*)", "destination": "/index.html" }
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

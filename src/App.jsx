@@ -2532,7 +2532,11 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .acc:hover{border-color:var(--mar)}.acc.on{color:var(--coral);border-color:var(--coral)}
 .ficha-sub{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--slate);font-size:14px;margin:8px 0 22px}
 .verif-inline{display:inline-flex;align-items:center;gap:5px;color:var(--sage);font-weight:600}
+/* min-width:0 en los hijos: por defecto un elemento de rejilla no se encoge por debajo de su
+   contenido (min-width:auto), y en el móvil la columna de la ficha se salía 5px de la
+   pantalla arrastrando la foto y las specs. */
 .ficha-grid{display:grid;grid-template-columns:1fr 372px;gap:36px;align-items:start}
+.ficha-grid>*{min-width:0}
 .ficha .foto{border-radius:20px}
 .galeria{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-top:9px}
 .mini{position:relative;height:78px;border-radius:12px;overflow:hidden}.mini span{position:absolute;left:8px;bottom:6px;font-size:10px;color:var(--arena)}
@@ -2785,6 +2789,17 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
   .modal{padding:22px;max-height:94vh}
   .ok.centro{padding:26px;margin:28px auto}
   .rol-chips .rc,.clase-pub .cp{min-width:0;flex:1 1 45%}
+}
+
+/* Con el dedo no se acierta a un botón de 19px. Los desplegables del buscador —el botón
+   principal de la portada— medían eso, y el menú y los enlaces del pie poco más. En el móvil
+   todo lo que se pulsa pasa a 44px, que es lo mínimo para un dedo. */
+@media(pointer:coarse),(max-width:820px){
+  .b-campo select,.b-campo input,.filtros-fila select,.brapido input{min-height:44px}
+  .hamburguesa{display:flex;align-items:center;justify-content:center;width:44px;height:44px}
+  .volver,.link-mas,.foot-cols button,.legal-nav button{min-height:44px;display:inline-flex;align-items:center}
+  .acc,.cs,.btn-sec.sm,.btn-primario.sm{min-height:44px}
+  .card{-webkit-tap-highlight-color:transparent}
 }
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 `;

@@ -151,6 +151,24 @@ diferencia de cualquier usuario real de la app).
   navegador directamente — verificado con pruebas reales (`curl` sin sesión intentando
   insertar una reserva "pagada": rechazado por RLS; ver también el trigger de arriba).
 
+## Captación de propietarios: el problema nº1 ahora mismo
+La web está terminada y en producción, pero con **cero anuncios y cero propietarios**. Lo
+que falta no es código, es **oferta**. Plan acordado con Eric: contactar **a mano, uno a
+uno** a los propietarios que ya anuncian su barco en **Wallapop** (guion completo en
+`docs/mensaje-propietarios-wallapop.md`). Nada de mensajes masivos ni robots: Wallapop
+prohíbe captar usuarios hacia otros servicios y le cerrarían la cuenta.
+- **`yachtoday.com/propietarios`** (componente `Propietarios`) es la página a la que se
+  enlaza desde fuera: la portada está escrita para quien quiere alquilar un barco, no para
+  quien lo tiene. Necesita el rewrite de SPA de `vercel.json` o daría 404.
+- El tono honesto ("Acabamos de abrir, y todavía no tenemos clientes") es **deliberado**:
+  el propietario lo va a comprobar en dos clics, y decirlo primero —junto con "gratis, sin
+  exclusividad, sigue en Wallapop"— es lo que convierte la debilidad en un sí fácil.
+- **Publicidad de pago: todavía no.** Traer clientes a una web sin barcos es tirar el
+  dinero. Primero oferta (unos 10-15 barcos **en una sola zona**), luego demanda.
+- Idea pendiente que Eric aparcó: **lista de espera de clientes por zona**, para poder
+  decirle a un propietario "tengo N personas esperando barco en tu zona". Es la forma
+  honesta de fabricar la prueba de demanda que hoy no existe.
+
 ## Nada falso en producción (2026-07-12)
 Al abrir la web al público se quitaron tres cosas que eran de mentira y que en un sitio
 real dejaban de ser inocentes:

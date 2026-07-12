@@ -3,7 +3,7 @@ import { supabase } from "./lib/supabaseClient";
 import { listarAnunciosPublicados, listarMisAnuncios, crearAnuncio, actualizarAnuncio, borrarArchivosDeAnuncio, notificarAnuncio, subirFotos, subirDocumentos, urlFirmadaDocumento, eliminarAnuncio, listarAnunciosEnRevision, cambiarEstadoAnuncio } from "./lib/anuncios";
 import { listarMisReservas, listarReservasRecibidas, actualizarReserva, notificarCancelacion } from "./lib/reservas";
 import { listarFavoritos, anadirFavorito, quitarFavorito } from "./lib/favoritos";
-import { iniciarPago, conectarCobros, cobrarFianza } from "./lib/pagos";
+import { iniciarPago, conectarCobros, cobrarFianza, estadoCobros } from "./lib/pagos";
 import {
   Anchor, Search, MapPin, Users, Star, Ship, Waves, ChevronRight, Check,
   Plus, ArrowLeft, Ruler, Gauge, ShieldCheck, Menu, X, Sailboat, Info,
@@ -937,7 +937,7 @@ function estadoFidelidad(count) {
 }
 
 /* ── Panel de usuario ────────────────────────────────────────────── */
-function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onReclamarFianza, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEditarAnuncio, onEliminarAnuncio }) {
+function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, cobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onReclamarFianza, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEditarAnuncio, onEliminarAnuncio }) {
   const esCliente = usuario.rol === "cliente" || usuario.rol === "ambas";
   const esProp = usuario.rol === "propietario" || usuario.rol === "ambas";
   const activas = reservas.filter((r) => r.estado !== "finalizada").slice().sort((a, b) => new Date(a.inicioISO) - new Date(b.inicioISO));
@@ -1021,9 +1021,21 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
         {esProp && (
           <section className="panel-sec">
             <h2 className="serif sec-t"><ShieldCheck size={18} /> Cobros</h2>
-            {usuario.stripeAccountId
-              ? (<><p className="mini-nota">✓ Cuenta de cobro conectada con Stripe.</p><button className="btn-sec sm" onClick={onConectarStripe}>Revisar datos de cobro</button></>)
-              : (<><p className="mini-nota">Para recibir el dinero de tus alquileres, conecta una cuenta de cobro con Stripe (tarda unos minutos).</p><button className="btn-primario sm" onClick={onConectarStripe}>Activar cobros</button></>)}
+            {/* "Conectada" no es lo mismo que "puede cobrar": hasta que Stripe no termina la
+                verificación de identidad, NINGÚN anuncio de este propietario se puede
+                reservar. Antes el panel le decía "✓ conectada" y él no se enteraba. */}
+            {!usuario.stripeAccountId
+              ? (<><p className="mini-nota">Para recibir el dinero de tus alquileres, conecta una cuenta de cobro con Stripe (tarda unos minutos).</p><button className="btn-primario sm" onClick={onConectarStripe}>Activar cobros</button></>)
+              : cobros === null
+                ? <p className="mini-nota">Comprobando tu cuenta de cobro…</p>
+                : cobros.listo
+                  ? (<><p className="mini-nota">✓ Todo listo: puedes recibir reservas y cobrar.</p><button className="btn-sec sm" onClick={onConectarStripe}>Revisar datos de cobro</button></>)
+                  : (<>
+                      <p className="mini-nota mini-nota-error">
+                        <b>Tus anuncios NO se pueden reservar todavía.</b> Tienes la cuenta de Stripe creada, pero te falta terminar la verificación: hasta entonces Stripe no te deja recibir dinero, y cualquiera que intente alquilarte no podrá pagar.
+                      </p>
+                      <button className="btn-primario sm" onClick={onConectarStripe}>Terminar la verificación</button>
+                    </>)}
             {errorCobros && <p className="mini-nota mini-nota-error">{errorCobros}</p>}
           </section>
         )}
@@ -1903,6 +1915,7 @@ export default function App() {
   const [anunciosRevision, setAnunciosRevision] = useState([]);
   const [mensaje, setMensaje] = useState(null);
   const [errorCobros, setErrorCobros] = useState("");
+  const [cobros, setCobros] = useState(null); // { conectado, listo, pendientes } · null = comprobando
   const esAdmin = usuario?.email === ADMIN_EMAIL;
 
   useEffect(() => {
@@ -1954,6 +1967,8 @@ export default function App() {
     listarMisReservas(usuario.id).then(setReservas).catch(console.error);
     listarReservasRecibidas(usuario.id).then(setReservasRecibidas).catch(console.error);
     listarFavoritos(usuario.id).then(setFavoritos).catch(console.error);
+    // Estado real de sus cobros: "conectado" no significa "puede cobrar".
+    if (usuario.stripeAccountId) estadoCobros().then(setCobros).catch(console.error);
   }, [usuario?.id]);
 
   useEffect(() => {
@@ -2261,7 +2276,7 @@ export default function App() {
           onSalir={cerrarSesion}
         />
       )}
-      {vista === "panel" && usuario && !esAdmin && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={setRechazandoAnuncio} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEditarAnuncio={(b) => { setEditandoAnuncio(b); ir("editar"); }} onEliminarAnuncio={setEliminandoAnuncio} />)}
+      {vista === "panel" && usuario && !esAdmin && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={setRechazandoAnuncio} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} cobros={cobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEditarAnuncio={(b) => { setEditandoAnuncio(b); ir("editar"); }} onEliminarAnuncio={setEliminandoAnuncio} />)}
 
       {auth && <AuthModal tab={auth.tab} rolPre={auth.rolPre} onClose={() => setAuth(null)} onCambiarTab={(t) => setAuth((a) => ({ ...a, tab: t }))} onAuth={completarAuth} />}
       {cancelando && <CancelarModal reserva={cancelando} onClose={() => setCancelando(null)} onConfirmar={confirmarCancelacion} />}

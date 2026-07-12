@@ -22,6 +22,16 @@ export async function conectarCobros() {
   return data.url;
 }
 
+/* ¿Puede el propietario cobrar de verdad? Tener cuenta de Stripe no basta: hasta que no
+   termina la verificación de identidad, sus anuncios no se pueden reservar. Sin esto, el
+   panel le decía "✓ conectada" y él no se enteraba de nada. */
+export async function estadoCobros() {
+  const { data, error } = await supabase.functions.invoke("estado-cobros", { body: {} });
+  if (error) throw error;
+  if (!data?.ok) throw new Error(data?.error || "No se ha podido comprobar el estado de tus cobros.");
+  return data; // { conectado, listo, pendientes }
+}
+
 // Cobra la fianza al cliente. La fianza no está retenida: es la tarjeta que Stripe guardó
 // al pagar. Solo la puede cobrar el propietario de la reserva, y solo si hubo daños.
 export async function cobrarFianza(reservaId, motivo) {

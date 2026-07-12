@@ -61,7 +61,20 @@ Deno.serve(async (req) => {
     const { data: propData } = await admin.auth.admin.getUserById(anuncio.propietario_id);
     const stripeAccountId = propData?.user?.user_metadata?.stripe_account_id;
     if (!stripeAccountId) {
-      return new Response(JSON.stringify({ ok: false, error: "El propietario todavía no ha activado los cobros. Escríbele para que lo haga desde su panel." }), { headers: CORS });
+      return new Response(JSON.stringify({ ok: false, error: "Este anuncio no puede recibir pagos todavía: su propietario aún no ha activado los cobros." }), { headers: CORS });
+    }
+
+    /* Tener cuenta de Stripe no basta: mientras el propietario no termine la verificación de
+       identidad, Stripe no le habilita "transfers" y el pago revienta con un error en inglés
+       y en su jerga, que le saldría tal cual al cliente. Lo comprobamos antes y se lo
+       decimos en cristiano. */
+    const stripeCheck = new Stripe(Deno.env.get("STRIPE_SECRET_KEY")!);
+    const cuenta = await stripeCheck.accounts.retrieve(stripeAccountId);
+    if (cuenta.capabilities?.transfers !== "active") {
+      return new Response(JSON.stringify({
+        ok: false,
+        error: "Este anuncio no puede recibir pagos todavía: su propietario tiene la verificación de cobro a medias. No es culpa tuya — prueba con otro anuncio o vuelve en un rato.",
+      }), { headers: CORS });
     }
 
     const exp = anuncio.clase === "experiencia";
@@ -156,6 +169,16 @@ Deno.serve(async (req) => {
 
     return new Response(JSON.stringify({ ok: true, url: session.url }), { headers: CORS });
   } catch (err) {
-    return new Response(JSON.stringify({ ok: false, error: String(err) }), { headers: CORS });
+    /* Los errores de Stripe llegan en inglés y en su jerga. Un cliente que solo quiere
+       alquilar un kayak no puede leer "your destination account needs the transfers
+       capability": no es culpa suya, no puede hacer nada, y encima parece que la web está
+       rota. El caso real es que el propietario no ha terminado su verificación de Stripe. */
+    const bruto = String(err);
+    const esCapacidadPendiente = /capabilit|transfers|charges_enabled|not enabled/i.test(bruto);
+    const mensaje = esCapacidadPendiente
+      ? "Este anuncio no puede recibir pagos todavía: su propietario tiene la verificación de cobro a medias. No es culpa tuya — prueba con otro anuncio o vuelve en un rato."
+      : "No se ha podido iniciar el pago. Inténtalo de nuevo en unos minutos.";
+    console.error("Error creando la sesión de pago:", bruto);
+    return new Response(JSON.stringify({ ok: false, error: mensaje }), { headers: CORS });
   }
 });

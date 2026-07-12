@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabaseClient";
 import { listarAnunciosPublicados, listarMisAnuncios, crearAnuncio, actualizarAnuncio, borrarArchivosDeAnuncio, notificarAnuncio, subirFotos, subirDocumentos, urlFirmadaDocumento, eliminarAnuncio, listarAnunciosEnRevision, cambiarEstadoAnuncio } from "./lib/anuncios";
 import { listarMisReservas, listarReservasRecibidas, actualizarReserva, notificarCancelacion } from "./lib/reservas";
+import { Legal } from "./Legal";
 import { listarFavoritos, anadirFavorito, quitarFavorito } from "./lib/favoritos";
 import { iniciarPago, conectarCobros, cobrarFianza, estadoCobros } from "./lib/pagos";
 import {
@@ -175,6 +176,7 @@ const ZONAS = ["Todas", "Baleares", "Costa Brava", "C. Valenciana", "Costa Blanc
    único que se lee al volver; el texto de detrás está solo para que la URL se entienda y
    para que Google sepa de qué va. */
 const RUTA_ANUNCIO = /^\/(barco|experiencia|material)\/(\d+)/;
+const SECCIONES_LEGALES = ["privacidad", "terminos", "aviso-legal", "cookies"];
 const aSlug = (s) => String(s || "")
   .toLowerCase()
   .normalize("NFD").replace(/[̀-ͯ]/g, "") // fuera acentos: "Bavaria Crucero" → "bavaria-crucero"
@@ -1905,6 +1907,7 @@ export default function App() {
   const [reclamandoFianza, setReclamandoFianza] = useState(null);
   const [editandoAnuncio, setEditandoAnuncio] = useState(null);
   const [rechazandoAnuncio, setRechazandoAnuncio] = useState(null);
+  const [seccionLegal, setSeccionLegal] = useState("privacidad");
   const [avisosPropietario, setAvisosPropietario] = useState(0);
   const [resenando, setResenando] = useState(null);
   const [eliminandoAnuncio, setEliminandoAnuncio] = useState(null);
@@ -1931,7 +1934,9 @@ export default function App() {
   /* yachtoday.com/propietarios entra directo en la página de propietarios: es el enlace
      que se manda a los dueños de barcos, y la portada está escrita para el cliente. */
   useEffect(() => {
-    if (window.location.pathname.replace(/\/$/, "") === "/propietarios") setVista("propietarios");
+    const ruta = window.location.pathname.replace(/^\/|\/$/g, "");
+    if (ruta === "propietarios") setVista("propietarios");
+    else if (SECCIONES_LEGALES.includes(ruta)) { setSeccionLegal(ruta); setVista("legal"); }
   }, []);
 
   /* Alguien abre un enlace compartido (/barco/211-...): hay que esperar a que carguen los
@@ -1955,7 +1960,10 @@ export default function App() {
         const encontrado = anuncios.find((a) => String(a.id) === m[2]);
         if (encontrado) { setItem(encontrado); setVista("ficha"); return; }
       }
-      setVista(window.location.pathname.replace(/\/$/, "") === "/propietarios" ? "propietarios" : "home");
+      const ruta = window.location.pathname.replace(/^\/|\/$/g, "");
+      if (ruta === "propietarios") setVista("propietarios");
+      else if (SECCIONES_LEGALES.includes(ruta)) { setSeccionLegal(ruta); setVista("legal"); }
+      else setVista("home");
     };
     window.addEventListener("popstate", alVolver);
     return () => window.removeEventListener("popstate", alVolver);
@@ -2038,6 +2046,15 @@ export default function App() {
     if (RUTA_ANUNCIO.test(rutaActual) && v !== "ficha") {
       window.history.pushState(null, "", v === "propietarios" ? "/propietarios" : "/");
     }
+  };
+  /* Las páginas legales tienen dirección propia (/privacidad, /terminos…) porque hay que
+     poder enlazarlas desde fuera: en un correo, en un contrato, o cuando alguien te las pide. */
+  const irLegal = (s) => {
+    setSeccionLegal(s);
+    setVista("legal");
+    setMenu(false);
+    window.scrollTo(0, 0);
+    window.history.pushState(null, "", "/" + s);
   };
   const abrir = (x) => {
     setItem(x);
@@ -2244,6 +2261,7 @@ export default function App() {
       {vista === "ficha" && item && (<Ficha item={item} usuario={usuario} numReservas={reservas.filter((r) => r.estado === "finalizada").length} onBack={() => ir("explorar")} esFavorito={!!favoritos.find((x) => x.id === item.id)} onToggleFav={toggleFav} onNecesitaCuenta={() => abrirAuth("registro", "cliente", "reservar")} />)}
       {vista === "ventajas" && <Ventajas onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onMantenimiento={() => ir("mantenimiento")} />}
       {vista === "propietarios" && <Propietarios onPublicar={irPublicar} onVentajas={() => ir("ventajas")} />}
+      {vista === "legal" && <Legal seccion={seccionLegal} onIr={irLegal} />}
       {vista === "mantenimiento" && <SpenMechanics />}
       {(vista === "contacto" || vista === "faq" || vista === "cancelaciones") && <Ayuda seccion={vista} onCambiar={ir} usuario={usuario} onIrPanel={() => ir("panel")} onAbrirAuth={abrirAuth} />}
       {vista === "publicar" && usuario && <Publicar usuario={usuario} onDone={() => ir("panel")} onPublicado={(b) => setMisBarcos((p) => [b, ...p])} />}
@@ -2293,6 +2311,7 @@ export default function App() {
           <div><h4>Explorar</h4><button onClick={() => { setClaseReset("barco"); ir("explorar"); }}>Barcos</button><button onClick={() => { setClaseReset("experiencia"); ir("explorar"); }}>Experiencias</button><button onClick={() => { setClaseReset("material"); ir("explorar"); }}>SUP y kayak</button></div>
           <div><h4>Yacht Today</h4><button onClick={() => ir("ventajas")}>Ventajas</button><button onClick={irPublicar}>Publica lo tuyo</button><button onClick={() => ir("home")}>Cómo funciona</button></div>
           <div><h4>Ayuda</h4><button onClick={() => ir("contacto")}>Contacto</button><button onClick={() => ir("faq")}>Preguntas frecuentes</button><button onClick={() => ir("cancelaciones")}>Cancelaciones</button></div>
+          <div><h4>Legal</h4><button onClick={() => irLegal("privacidad")}>Privacidad</button><button onClick={() => irLegal("terminos")}>Términos y condiciones</button><button onClick={() => irLegal("aviso-legal")}>Aviso legal</button><button onClick={() => irLegal("cookies")}>Cookies</button></div>
         </div>
       </footer>
       <div className="foot-legal">Yacht Today © 2026 · Alquiler náutico entre particulares en toda España</div>
@@ -2432,6 +2451,24 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .filtros-fila select{padding:9px 13px;border:1px solid var(--linea);border-radius:10px;background:var(--blanco)}
 .check{display:flex;align-items:center;gap:7px;font-size:13.5px;color:var(--slate)}
 .vacio{text-align:center;padding:60px 20px;color:var(--muted)}.vacio svg{color:var(--mar);margin-bottom:12px}.vacio p{margin-bottom:16px}
+
+.legal{max-width:820px;margin:0 auto;padding:32px clamp(16px,4vw,52px) 72px}
+.legal-nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:28px;padding-bottom:16px;border-bottom:1px solid var(--linea)}
+.legal-nav button{padding:8px 15px;border:1px solid var(--linea);background:var(--blanco);border-radius:999px;font-family:inherit;font-size:13.5px;color:var(--slate);cursor:pointer}
+.legal-nav button.on{background:var(--noche);border-color:var(--noche);color:var(--arena);font-weight:600}
+.legal-txt h1{font-size:clamp(26px,4vw,34px);color:var(--noche);margin-bottom:20px}
+.legal-txt h2{font-family:'Newsreader',Georgia,serif;font-size:19px;font-weight:600;color:var(--noche);margin:30px 0 10px}
+.legal-txt p,.legal-txt li{font-size:15px;line-height:1.65;color:var(--slate);margin-bottom:10px}
+.legal-txt ul{padding-left:20px;margin-bottom:10px}
+.legal-txt li{margin-bottom:6px}
+.legal-txt b{color:var(--tinta)}
+.legal-tabla{width:100%;border-collapse:collapse;margin:14px 0 18px;font-size:14px}
+.legal-tabla th{text-align:left;padding:10px 12px;background:var(--arena2);color:var(--noche);font-size:13px;border:1px solid var(--linea)}
+.legal-tabla td{padding:10px 12px;border:1px solid var(--linea);color:var(--slate);vertical-align:top}
+.legal-pendiente{padding:14px 16px;margin:16px 0;background:#FBF0EF;border-left:3px solid var(--coral);border-radius:8px;font-size:14px;color:var(--noche)}
+.legal-pendiente code{background:rgba(0,0,0,.06);padding:1px 5px;border-radius:4px;font-size:13px}
+.legal-hueco{color:var(--coral);font-style:italic}
+.legal-fecha{margin-top:34px;padding-top:16px;border-top:1px solid var(--linea);font-size:13px;color:var(--muted)}
 
 .admin{max-width:960px;margin:0 auto;padding:22px clamp(16px,4vw,52px) 64px}
 .admin-acceso{display:flex;align-items:center;gap:10px;width:100%;padding:16px 20px;margin-bottom:20px;background:var(--noche);color:var(--arena);border:none;border-radius:14px;font-family:inherit;font-size:14.5px;font-weight:600;cursor:pointer;text-align:left}

@@ -250,17 +250,26 @@ real dejaban de ser inocentes:
   propietarios (bloque `.arranque`) en vez de un catálogo desierto o un "no hay resultados
   con esos filtros" que echaba la culpa a los filtros.
 
-## Correo entrante: `soporte@yachtoday.com` y cualquier otra dirección
-Resend **envía** pero no recibe, así que el correo entrante lo hace **ImprovMX** (plan
-gratuito, cuenta de `yachtoday@gmail.com`): registros MX (`mx1`/`mx2.improvmx.com`) y SPF
-en el DNS de Vercel, y un **alias comodín `*@yachtoday.com` → `yachtoday@gmail.com`**. O
-sea que `soporte@`, `info@`, `hola@`… todas llegan al Gmail del negocio sin configurar nada
-más. Verificado el 2026-07-12. (Cloudflare Email Routing **no** vale aquí: exige sus
-propios nameservers y el DNS vive en Vercel.)
+## Correo: quién envía y quién recibe (no tocar sin leer esto)
+Son **dos sistemas distintos** sobre el mismo dominio, y es fácil cargarse uno tocando el otro:
 
-El SPF de ImprovMX va en el dominio raíz y el de Resend en el subdominio `send.` — por eso
-conviven sin pisarse: Resend firma con DKIM (`resend._domainkey`) y usa `send.yachtoday.com`
-como Return-Path, así que el SPF de la raíz no afecta al envío.
+- **Enviar (la app) → Resend.** Los correos de la web (`no-reply@`, `reservas@`, `anuncios@`)
+  salen por Resend. Vive en el **subdominio `send.`**: `send MX` → `feedback-smtp.eu-west-1.amazonses.com`,
+  `send TXT` → SPF de amazonses, y DKIM en **`resend._domainkey`**. **Estos tres registros no
+  se tocan jamás**: si desaparecen, dejan de llegar las confirmaciones de registro y los avisos
+  de reserva.
+- **Recibir (buzón real) → Zoho Mail** (plan gratuito, centro de datos **EU**). Buzón
+  **`eric@yachtoday.com`** con el alias **`soporte@yachtoday.com`** (misma bandeja, en
+  https://mail.zoho.eu). En el **dominio raíz**: MX `mx.zoho.eu`/`mx2`/`mx3`, SPF
+  `v=spf1 include:zohomail.eu ~all` y DKIM en **`zmail._domainkey`**.
+
+Conviven porque **cada uno usa su sitio**: Resend firma con su DKIM y usa `send.yachtoday.com`
+como Return-Path, así que el SPF de la raíz (el de Zoho) no le afecta. Los dos DKIM son
+selectores distintos y no se pisan.
+
+**ImprovMX se retiró** (2026-07-12): reenviaba a Gmail, pero Eric quería un buzón corporativo
+de verdad, no operar desde su Gmail. Todo el DNS se gestiona con `vercel dns add/rm`.
+(Cloudflare Email Routing **no** vale aquí: exige sus propios nameservers y el DNS vive en Vercel.)
 
 ## Notas de trabajo
 - El usuario (Eric) es no técnico: explica los pasos de forma sencilla y ve poco a poco.

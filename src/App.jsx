@@ -2798,7 +2798,7 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
   .b-campo select,.b-campo input,.filtros-fila select,.brapido input{min-height:44px}
   .hamburguesa{display:flex;align-items:center;justify-content:center;width:44px;height:44px}
   .volver,.link-mas,.foot-cols button,.legal-nav button{min-height:44px;display:inline-flex;align-items:center}
-  .acc,.cs,.btn-sec.sm,.btn-primario.sm{min-height:44px}
+  .acc,.cs,.btn-sec.sm,.btn-primario.sm,.toggle button{min-height:44px}
   .card{-webkit-tap-highlight-color:transparent}
 }
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}

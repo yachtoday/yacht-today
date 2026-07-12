@@ -348,14 +348,16 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
       <div className="ficha-grid">
         <div>
           <Foto item={item} alto={360} tag={false} />
-          <div className="galeria">
-            {(exp ? ["A bordo", "En acción", "El grupo", "El plan"] : mat ? ["Detalle", "En uso", "Entrega", "Extras"] : ["Cubierta", "Camarote", "Salón", "Cocina"]).map((n, i) => {
-              const foto = item.fotos?.[i + 1];
-              return foto
-                ? <div key={n} className="mini"><img className="foto-img" src={foto} alt={`${item.nombre} — ${n}`} loading="lazy" /></div>
-                : <div key={n} className="mini" style={{ background: `linear-gradient(160deg, hsl(${item.hue + i * 6} 34% ${32 - i * 3}%), hsl(${item.hue + 14} 42% 18%))` }}><span>{n}</span></div>;
-            })}
-          </div>
+          {/* Solo fotos de verdad. Antes se pintaban siempre 4 huecos con etiquetas
+              inventadas ("Camarote", "Detalle"…) y, si no había foto, salía un rectángulo
+              azul con el texto encima: parecía que la web estaba rota. */}
+          {item.fotos?.length > 1 && (
+            <div className="galeria">
+              {item.fotos.slice(1, 5).map((foto, i) => (
+                <div key={foto} className="mini"><img className="foto-img" src={foto} alt={`${item.nombre} — foto ${i + 2}`} loading="lazy" /></div>
+              ))}
+            </div>
+          )}
           <div className="specs">{specs.map(([Ic, k, v]) => <Spec key={k} icon={Ic} k={k} v={v} />)}</div>
           <h2 className="serif bloque-tit">{tituloSobre}</h2>
           <p className="bloque-txt">{item.desc}</p>
@@ -1323,9 +1325,21 @@ function Publicar({ usuario, onDone, onPublicado }) {
   const { estado: verificacion, iniciar: iniciarVerificacion } = useVerificacionAutomatica();
   const previews = useMemo(() => fotos.map((f) => URL.createObjectURL(f)), [fotos]);
   useEffect(() => () => previews.forEach((u) => URL.revokeObjectURL(u)), [previews]);
-  const agregarFotos = (e) => { setFotos((p) => [...p, ...Array.from(e.target.files || [])].slice(0, 6)); e.target.value = ""; };
+  /* Hay que copiar los archivos ANTES de vaciar el input. React ejecuta la función que se
+     le pasa a setState más tarde, al renderizar; si dentro de ella se lee `e.target.files`,
+     para entonces el `e.target.value = ""` de la línea siguiente ya lo ha vaciado y se
+     añaden cero archivos. Por eso la subida de fotos no funcionó nunca. */
+  const agregarFotos = (e) => {
+    const nuevas = Array.from(e.target.files || []);
+    e.target.value = "";
+    setFotos((p) => [...p, ...nuevas].slice(0, 6));
+  };
   const quitarFoto = (i) => setFotos((p) => p.filter((_, idx) => idx !== i));
-  const agregarDocumentos = (e) => { setDocumentos((p) => [...p, ...Array.from(e.target.files || [])].slice(0, 4)); e.target.value = ""; };
+  const agregarDocumentos = (e) => {
+    const nuevos = Array.from(e.target.files || []);
+    e.target.value = "";
+    setDocumentos((p) => [...p, ...nuevos].slice(0, 4));
+  };
   const quitarDocumento = (i) => setDocumentos((p) => p.filter((_, idx) => idx !== i));
   useEffect(() => setEquipoSel([]), [clase]);
   const agregarEquipoCustom = () => {
@@ -1341,9 +1355,12 @@ function Publicar({ usuario, onDone, onPublicado }) {
   /* Un kayak o una tabla de paddle surf no tienen seguro ni matrícula: no se les pide
      documentación ninguna. A cambio, su dueño fija la fianza en euros — el 20 % de un
      alquiler de 15 € serían 3 €, que no cubren perder el material. */
-  const faltaDocumentacion = esMat
+  /* Al menos una foto: un anuncio sin fotos sale con un dibujo genérico y no lo reserva
+     nadie. Se permitía publicar sin ninguna y así se publicó el primer anuncio real. */
+  const faltanFotos = fotos.length === 0;
+  const faltaDocumentacion = faltanFotos || (esMat
     ? !(+fianzaMat > 0)
-    : !consiento || !poliza.trim() || !caducidadSeguro || seguroCaducado || (!esExp && !matricula.trim());
+    : !consiento || !poliza.trim() || !caducidadSeguro || seguroCaducado || (!esExp && !matricula.trim()));
 
   const publicar = () => {
     if (faltaDocumentacion) return;
@@ -1418,7 +1435,8 @@ function Publicar({ usuario, onDone, onPublicado }) {
           )}
           <label className="field"><span>Descripción</span><textarea rows={3} value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Cuenta qué lo hace especial…" /></label>
           <input ref={fotosInputRef} type="file" accept="image/*" multiple hidden onChange={agregarFotos} />
-          <button type="button" className="fotos-drop" onClick={() => fotosInputRef.current?.click()}><Plus size={16} /> {fotos.length ? "Añadir más fotos" : "Añadir fotos"}</button>
+          <button type="button" className="fotos-drop" onClick={() => fotosInputRef.current?.click()}><Plus size={16} /> {fotos.length ? "Añadir más fotos" : "Añadir fotos (obligatorio)"}</button>
+          {faltanFotos && <p className="mini-nota">Sube al menos una foto. Sin fotos, tu anuncio sale con un dibujo genérico y prácticamente nadie lo reserva.</p>}
           {fotos.length > 0 && (
             <div className="fotos-previews">
               {previews.map((src, i) => (

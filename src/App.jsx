@@ -1013,7 +1013,7 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
 
         {esProp && reservasRecibidas.length > 0 && (
           <section className="panel-sec"><h2 className="serif sec-t"><ClipboardList size={18} /> Reservas recibidas</h2>
-            <p className="mini-nota">De mentira, para que puedas probar el programa de recompensas de propietario antes de tener clientes reales.</p>
+            <p className="mini-nota">Cuando termine el alquiler, dale el visto bueno para cerrarlo. Si te lo devuelven dañado o no te lo devuelven, pulsa «Hubo daños» y le cobraremos la fianza a la tarjeta del cliente.</p>
             <ul className="lista">{reservasRecibidas.map((r) => {
               const yaTermino = new Date() > new Date(r.finISO);
               return (

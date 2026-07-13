@@ -902,21 +902,32 @@ function ResenaModal({ reserva, onClose, onGuardar }) {
 }
 
 /* ── Recompensas (niveles, insignias) ────────────────────────────── */
+/* Los niveles son un distintivo, y ahora lo dicen. Antes prometían "promociones privadas",
+   "acceso prioritario", "eventos" y "regalos": nada de eso existía ni existe. La ventaja de
+   verdad para el cliente es el descuento en gastos de gestión, que sí está implementado y lo
+   recalcula el servidor al cobrar (`estadoFidelidad`, también en `crear-pago`). */
 const NIVELES = [
-  { n: "Explorer", min: 0, b: "Tu primera travesía" },
-  { n: "Captain", min: 5, b: "Promociones privadas" },
-  { n: "Navigator", min: 10, b: "Descuentos exclusivos y acceso prioritario" },
-  { n: "Admiral", min: 20, b: "Eventos, experiencias premium y regalos" },
+  { n: "Explorer", min: 0, b: "Acabas de zarpar. Tu tercera reserva ya te sale más barata." },
+  { n: "Captain", min: 5, b: "Un ciclo completo: has llegado al 100% de descuento en gastos de gestión." },
+  { n: "Navigator", min: 10, b: "Dos ciclos. Del mar sabes más que la mayoría." },
+  { n: "Admiral", min: 20, b: "Cuatro ciclos. De los nuestros." },
 ];
 const INSIGNIAS = [
   { t: "Primera navegación", min: 1 }, { t: "Explorador de calas", min: 3 }, { t: "5 reservas", min: 5 },
   { t: "Capitán del verano", min: 8 }, { t: "10 reservas", min: 10 }, { t: "Cliente VIP", min: 20 },
 ];
+/* "Cuida tu Barco": los premios los sirve Spen Mechanics S.L. (el taller de Eric) y se pagan
+   con la comisión que ha generado ESE barco — a los 5 alquileres ya la cubre de sobra, así que
+   el programa nunca cuesta más de lo que ingresa. Antes prometía kits, revisiones y electrónica
+   a los 3/10/20/40 alquileres, comprados a precio de tienda: el primer hito ya se comía toda la
+   comisión de ese barco, y no había nadie detrás que lo sirviera.
+   El kit va por correo a toda España; lo que exige que Spen se desplace al puerto solo puede
+   prometerse donde llega hoy, y hoy llega a la Comunidad Valenciana.
+   El material (paddle surf y kayak) queda fuera: no tiene motor que mantener. */
+const SPEN_ZONA = "Comunidad Valenciana";
 const OWNER_NIVELES = [
-  { min: 3, premio: "Kit básico de mantenimiento: aceite y filtros (aceite, combustible, aire)." },
-  { min: 10, premio: "A elegir: limpieza profesional, kit premium o vale para tienda náutica." },
-  { min: 20, premio: "A elegir: revisión mecánica, descuento en taller o antifouling subvencionado." },
-  { min: 40, premio: "A elegir: electrónica náutica, chalecos homologados, defensas, cabos, batería o hélice." },
+  { min: 5, premio: "Kit de filtros (aire, aceite y gasoil) y una garrafa de aceite de 5 L, por correo a cualquier punto de España." },
+  { min: 15, premio: `15% de descuento en la limpieza del casco o del interior. La hace Spen Mechanics desplazándose a tu puerto (${SPEN_ZONA}).` },
 ];
 const FAQ = [
   { cat: "Reservar", preguntas: [
@@ -931,15 +942,15 @@ const FAQ = [
   ]},
   { cat: "Publicar tu barco", preguntas: [
     { p: "¿Cuánto cuesta publicar?", r: "Publicar es gratis. Solo se paga al alquilar, y los gastos de servicio los paga quien reserva: tú recibes tu tarifa íntegra." },
-    { p: "¿Qué documentación necesito?", r: "Matrícula, lista (6ª o 7ª) y póliza de seguro en vigor con su fecha de caducidad. La verificamos automáticamente al publicar, y un revisor de Yacht Today da el visto bueno final." },
+    { p: "¿Qué documentación necesito?", r: "Matrícula, lista (6ª o 7ª) y póliza de seguro en vigor con su fecha de caducidad, y una foto o PDF de cada documento. Un revisor de Yacht Today los mira uno a uno antes de publicar el anuncio: no lo aprueba ninguna máquina. Suele estar listo en menos de 24 horas y te avisamos por correo." },
   ]},
   { cat: "Seguridad y documentación", preguntas: [
     { p: "¿Están verificados los propietarios?", r: "Revisamos a mano cada anuncio antes de publicarlo. En barcos y experiencias pedimos matrícula, lista y seguro. El material sin motor (paddle surf y kayak) no lleva matrícula ni seguro obligatorio: ahí lo que revisamos es el anuncio y la fianza. Distinguimos con «Propietario Premium» a quienes mantienen mejor valoración y disponibilidad." },
     { p: "¿Qué pasa con mis datos?", r: "Tratamos tu documentación exclusivamente para verificar la reserva o el anuncio, conforme al RGPD. No se cede a terceros salvo obligación legal, y puedes pedir su supresión escribiendo a soporte@yachtoday.com." },
   ]},
   { cat: "Programa de recompensas", preguntas: [
-    { p: "¿Cómo subo de nivel?", r: "Cada alquiler cuenta: con 5 reservas pasas a Captain, con 10 a Navigator y con 20 a Admiral, desbloqueando descuentos y ventajas exclusivas." },
-    { p: "¿Qué es la Recompensa Compartida?", r: "Cuando un propietario llega a 25 o 50 alquileres, premiamos también a todos los clientes que alquilaron ese barco en el periodo: cupones o la posibilidad de un alquiler gratis." },
+    { p: "¿Qué gano yo por alquilar más?", r: "A la tercera reserva, los gastos de gestión te salen a mitad de precio; a la quinta, no pagas ninguno. Después el contador se reinicia y vuelve a empezar. Se aplica solo y lo ves desglosado antes de pagar. Los niveles (Captain, Navigator, Admiral) son un distintivo: no prometen nada aparte de eso." },
+    { p: "¿Qué es \"Cuida tu Barco\"?", r: "El programa para propietarios. Cuando uno de tus anuncios llega a 5 alquileres finalizados, te mandamos por correo un kit de filtros (aire, aceite y gasoil) con una garrafa de aceite de 5 L. A los 15, tienes un 15% de descuento en la limpieza del casco o del interior, que hacemos nosotros desplazándonos a tu puerto (de momento, solo en la Comunidad Valenciana). Lo sirve Spen Mechanics S.L., nuestro taller. El paddle surf y el kayak no entran: no tienen motor." },
   ]},
 ];
 const CANCELACION_TRAMOS = [
@@ -1082,7 +1093,9 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
               : <p className="mini-nota">✓ Sin avisos · optas al distintivo ⭐ Propietario Premium.</p>}
             {misBarcos.length ? (<ul className="lista">{misBarcos.map((b) => {
               const completadasBarco = reservasRecibidas.filter((r) => r.barcoId === b.id && r.estado === "finalizada").length;
-              const desbloqueado = completadasBarco >= OWNER_NIVELES[0].min;
+              /* Un kayak no tiene motor: prometerle "filtros de aire, aceite y gasoil" era absurdo. */
+              const cuidaBarco = b.clase !== "material";
+              const desbloqueado = cuidaBarco && completadasBarco >= OWNER_NIVELES[0].min;
               const siguienteBarco = OWNER_NIVELES.find((n) => completadasBarco < n.min);
               const enSieteDias = new Date(Date.now() + 7 * 86400000);
               const sinReservasProximas = !reservasRecibidas.some((r) => r.barcoId === b.id && r.estado !== "finalizada" && new Date(r.inicioISO) > new Date() && new Date(r.inicioISO) < enSieteDias);
@@ -1103,7 +1116,7 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
                     </p>
                   )}
                   {b.estado === "En revisión" && <p className="mini-nota">Lo estamos revisando. Te avisamos por correo en cuanto esté publicado.</p>}
-                  <p className="mini-nota">{completadasBarco} alquiler{completadasBarco === 1 ? "" : "es"} completados{siguienteBarco ? ` · faltan ${siguienteBarco.min - completadasBarco} para el siguiente premio` : " · ¡nivel máximo!"}</p>
+                  <p className="mini-nota">{completadasBarco} alquiler{completadasBarco === 1 ? "" : "es"} completados{cuidaBarco ? (siguienteBarco ? ` · faltan ${siguienteBarco.min - completadasBarco} para el siguiente premio de "Cuida tu Barco"` : " · ¡nivel máximo!") : ""}</p>
                   {desbloqueado && (
                     <button className="btn-sec sm" onClick={() => onEspecificar(b)}>
                       <Gauge size={14} /> {b.motorModelo ? `Motor: ${b.motorModelo}` : "Añadir especificaciones de motor"}
@@ -1275,8 +1288,9 @@ function Ventajas({ onExplorar, onPublicar, onMantenimiento }) {
         <div className="fidelidad">
           <div className="fid"><Gift size={20} /><div><b>Tras 3 alquileres</b><p>50% de descuento en gastos de gestión.</p></div></div>
           <div className="fid"><Gift size={20} /><div><b>Tras 5 alquileres</b><p>100% de descuento en gastos de gestión. Luego el contador reinicia.</p></div></div>
-          <div className="fid"><Award size={20} /><div><b>Insignias y retos</b><p>Explorador de calas, Capitán del verano, Cliente VIP… con retos de temporada.</p></div></div>
+          <div className="fid"><Award size={20} /><div><b>Insignias</b><p>Explorador de calas, Capitán del verano, Cliente VIP… se desbloquean solas al ir sumando reservas.</p></div></div>
         </div>
+        <p className="mini-nota">Los niveles son un distintivo. La ventaja de verdad es el descuento de arriba: se aplica solo, y lo ves desglosado antes de pagar.</p>
       </section>
 
       <section className="seccion">
@@ -1284,6 +1298,7 @@ function Ventajas({ onExplorar, onPublicar, onMantenimiento }) {
         <div className="owner-grid">
           {OWNER_NIVELES.map((o, i) => (<div key={o.min} className="owner-card"><span className="owner-n">Nivel {i + 1}</span><span className="owner-req">{o.min} alquileres</span><p>{o.premio}</p></div>))}
         </div>
+        <p className="mini-nota">Cuenta cada anuncio por separado, y solo los alquileres ya finalizados. El material sin motor (paddle surf y kayak) no entra en el programa.</p>
         <div className="premium"><BadgeCheck size={22} /><div><b>Distintivo ⭐ Propietario Premium</b><p>Excelente valoración, alta disponibilidad, respuesta rápida y sin cancelaciones: más visibilidad, más confianza y prioridad en las búsquedas.</p></div></div>
         <div className="premium" style={{ flexWrap: "wrap" }}>
           <Wrench size={22} />
@@ -1292,18 +1307,18 @@ function Ventajas({ onExplorar, onPublicar, onMantenimiento }) {
         </div>
       </section>
 
-      <section className="seccion recompensa-compartida">
-        <span className="eyebrow claro">La idea estrella</span>
-        <h2 className="serif">Recompensa Compartida</h2>
-        <p>Cuando un propietario alcanza un hito (25 o 50 alquileres), Yacht Today premia <b>al propietario y a todos los clientes</b> que alquilaron ese barco en ese periodo. El dueño recibe un vale de mantenimiento; los clientes, un cupón o entran en el sorteo de un alquiler gratis. Todos sienten que forman parte del éxito.</p>
-      </section>
-
+      {/* Antes aquí se prometían una "Recompensa Compartida" (cupones y sorteos de alquileres
+          gratis a los 25 y 50 alquileres), un programa de referidos, un sorteo anual de un fin
+          de semana en barco premium y unos "socios náuticos" (talleres, tiendas, marinas y
+          aseguradoras). No existía ninguna de las cuatro cosas, ni había nada en el código
+          detrás. En su lugar, lo único que sí es verdad: quién paga las recompensas y quién las
+          sirve. */}
       <section className="seccion">
-        <div className="sec-head"><h2 className="serif">Referidos y socios</h2></div>
+        <div className="sec-head"><h2 className="serif">¿Quién paga todo esto?</h2></div>
         <div className="ref-grid">
-          <div className="ref"><Handshake size={20} /><b>Invita y gana</b><p>Trae a un amigo o a otro propietario: cuando hace su primera reserva, ganáis descuentos, créditos o kits de mantenimiento.</p></div>
-          <div className="ref"><Waypoints size={20} /><b>Socios náuticos</b><p>Talleres, tiendas, marinas y aseguradoras nos ayudan a abaratar las recompensas. Ellos ganan clientes; tú, ventajas.</p></div>
-          <div className="ref"><Trophy size={20} /><b>Sorteo anual</b><p>Cada reserva es una participación para un fin de semana en barco premium, equipamiento y experiencias VIP.</p></div>
+          <div className="ref"><Waypoints size={20} /><b>Sale de nuestra comisión</b><p>Del 15% de gastos de servicio de cada reserva. Tú sigues cobrando tu tarifa íntegra: un barco alquilado 5 veces ya ha pagado su kit de sobra. Por eso podemos prometerlo sin letra pequeña.</p></div>
+          <div className="ref"><Wrench size={20} /><b>Lo sirve nuestro taller</b><p>Spen Mechanics S.L., en Castellón de la Plana. No es un descuento de un tercero: los filtros los mandamos nosotros y la limpieza la hacemos nosotros.</p></div>
+          <div className="ref"><Handshake size={20} /><b>Sin trampa</b><p>El kit se envía a toda España. Los trabajos que requieren que nos desplacemos a tu puerto, hoy solo los podemos hacer en la {SPEN_ZONA} — preferimos decírtelo antes que dejarte colgado.</p></div>
         </div>
       </section>
     </div>
@@ -1357,7 +1372,7 @@ function Propietarios({ onPublicar, onVentajas }) {
       <section className="seccion">
         <div className="premium">
           <Wrench size={22} />
-          <div style={{ flex: 1 }}><b>Y cuanto más alquilas, menos te cuesta mantenerlo</b><p>"Cuida tu Barco": al llegar a 3, 10, 20 y 40 alquileres desbloqueas kits de limpieza, revisiones y equipamiento. Algo que ninguna otra plataforma te da.</p></div>
+          <div style={{ flex: 1 }}><b>Y cuanto más alquilas, menos te cuesta mantenerlo</b><p>"Cuida tu Barco": a los 5 alquileres te mandamos un kit de filtros y una garrafa de aceite de 5 L; a los 15, un 15% de descuento en la limpieza del casco. Lo sirve nuestro propio taller, Spen Mechanics. Algo que ninguna otra plataforma te da.</p></div>
           <button className="btn-sec sm" style={{ marginLeft: "auto" }} onClick={onVentajas}>Ver el programa</button>
         </div>
       </section>
@@ -1386,6 +1401,9 @@ function SpenMechanics() {
         <span className="eyebrow claro">Mantenimiento náutico</span>
         <h1 className="serif v-h1">Spen Mechanics S.L.</h1>
         <p className="v-sub">Cuidamos tu embarcación como si fuera nuestra. Revisiones, mantenimiento de motor y puesta a punto, con materiales de calidad y trato cercano.</p>
+        {/* Ni la página ni la web decían dónde está el taller ni hasta dónde se desplaza: sin
+            eso, "vamos a tu puerto" es una promesa que no se puede comprobar ni cumplir. */}
+        <p className="v-sub"><b>Castellón de la Plana.</b> Vamos a tu puerto: damos servicio a domicilio en toda la {SPEN_ZONA}.</p>
         <div className="v-hero-btns">
           <a className="btn-primario auto claro-btn" href={SPEN_MECHANICS_URL} target="_blank" rel="noopener noreferrer">Pide presupuesto</a>
           <a className="btn-sec-claro" href={SPEN_MECHANICS_URL} target="_blank" rel="noopener noreferrer">www.spenmechanics.com</a>
@@ -1399,6 +1417,7 @@ function SpenMechanics() {
           <div className="fid"><ShieldCheck size={20} /><div><b>Gestión de averías</b><p>Diagnóstico y reparación con repuestos de calidad, avisándote siempre antes de actuar y con presupuesto claro.</p></div></div>
           <div className="fid"><Sparkles size={20} /><div><b>Limpieza y abrillantado</b><p>Casco, cubierta e interior a punto, dentro y fuera del agua.</p></div></div>
         </div>
+        <p className="mini-nota">Si tu barco está publicado en Yacht Today, "Cuida tu Barco" te descuenta parte de todo esto: a los 5 alquileres, kit de filtros y aceite; a los 15, un 15% en la limpieza.</p>
       </section>
 
       <section className="seccion">
@@ -2006,6 +2025,21 @@ export default function App() {
     if (!esAdmin) return;
     listarAnunciosEnRevision().then(setAnunciosRevision).catch(console.error);
   }, [esAdmin]);
+
+  /* La cola se quedaba congelada con lo que hubiera al abrir sesión: un anuncio que llegaba
+     mientras el panel estaba abierto no aparecía hasta recargar la página. Mientras el admin
+     mira el panel, se refresca sola cada minuto y al volver a la pestaña. */
+  useEffect(() => {
+    if (!esAdmin || vista !== "panel") return;
+    const refrescar = () => listarAnunciosEnRevision().then(setAnunciosRevision).catch(console.error);
+    const cadaMinuto = setInterval(refrescar, 60000);
+    const alVolverALaPestana = () => { if (!document.hidden) refrescar(); };
+    document.addEventListener("visibilitychange", alVolverALaPestana);
+    return () => {
+      clearInterval(cadaMinuto);
+      document.removeEventListener("visibilitychange", alVolverALaPestana);
+    };
+  }, [esAdmin, vista]);
 
   const revisarAnuncio = async (anuncio, estado, motivoRechazo = null) => {
     await cambiarEstadoAnuncio(anuncio.id, estado, motivoRechazo);

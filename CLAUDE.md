@@ -15,12 +15,27 @@ propietarios con personas que quieren disfrutar del mar. Lema: "Alquila el mar".
 - Constante `COMISION` en `src/App.jsx`.
 
 ## Programa de recompensas (diferenciador)
-- Clientes: niveles Explorer → Captain → Navigator → Admiral; descuento en gastos de
-  gestión (3 alquileres = 50%, 5 = 100%); insignias y retos.
-- Propietarios: "Cuida tu Barco" (3/10/20/40 alquileres → kits, revisiones, equipamiento);
-  distintivo Propietario Premium.
-- Idea estrella: "Recompensa Compartida" (al alcanzar un hito, se premia al propietario
-  y a los clientes de ese barco).
+**Todo lo que promete aquí tiene que poder cumplirse: es publicidad a consumidores.**
+- Clientes: descuento **real** en gastos de gestión (3 alquileres = 50%, 5 = 100%, luego el
+  contador se reinicia). Lo aplica `estadoFidelidad`, y **el servidor lo recalcula por su
+  cuenta** en `crear-pago`, así que lo que se enseña es lo que se cobra. Los niveles
+  (Explorer → Captain → Navigator → Admiral) e insignias son **solo un distintivo**, y la web
+  ya lo dice.
+- Propietarios: **"Cuida tu Barco"**, servido por **Spen Mechanics S.L.** (el taller de Eric,
+  en Castellón de la Plana) y pagado con la comisión que genera **ese mismo anuncio**:
+  **5 alquileres** → kit de filtros (aire, aceite, gasoil) + garrafa de aceite de 5 L, **por
+  correo a toda España**; **15 alquileres** → 15% de descuento en la limpieza de casco o
+  interior, **desplazándose al puerto — solo en la Comunidad Valenciana**, que es hasta donde
+  llega Spen hoy (`SPEN_ZONA`). El **material (SUP y kayak) no entra**: no tiene motor.
+  Más el distintivo Propietario Premium.
+- **Por qué se reescribió (2026-07-13):** prometía kits, limpiezas, revisiones y electrónica a
+  los 3/10/20/40 alquileres comprados a precio de tienda — **el primer hito ya se comía toda la
+  comisión de ese barco**, y un kayak desbloqueaba "filtros de aceite y gasoil". Se eliminaron
+  además cuatro promesas que **no existían en ninguna parte del código**: "Recompensa
+  Compartida" (cupones y alquileres gratis a los 25/50), programa de referidos, sorteo anual de
+  un fin de semana en barco premium, y unos "socios náuticos" (talleres, marinas y
+  aseguradoras) que no existen. La regla es la misma que con los anuncios de mentira: **si no se
+  puede cumplir, no se anuncia.**
 
 ## Stack actual
 - Vite + React 18, iconos `lucide-react`. Casi todo en `src/App.jsx` (un solo componente).

@@ -1,4 +1,12 @@
 {
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "www.yachtoday.com" }],
+      "destination": "https://yachtoday.com/$1",
+      "permanent": true
+    }
+  ],
   "rewrites": [
     { "source": "/propietarios", "destination": "/propietarios.html" },
     { "source": "/(.*)", "destination": "/index.html" }

@@ -6,6 +6,7 @@ import { Legal } from "./Legal";
 import { listarFavoritos, anadirFavorito, quitarFavorito } from "./lib/favoritos";
 import { iniciarPago, conectarCobros, cobrarFianza, estadoCobros } from "./lib/pagos";
 import { listarMisRecompensas, reclamarRecompensa, listarRecompensasPendientes, marcarRecompensaEnviada } from "./lib/recompensas";
+import { listarMisMensajes, listarMensajes, enviarMensaje, marcarLeidos } from "./lib/mensajes";
 import {
   Anchor, Search, MapPin, Users, Star, Ship, Waves, ChevronRight, Check,
   Plus, ArrowLeft, Ruler, Gauge, ShieldCheck, Menu, X, Sailboat, Info,
@@ -892,6 +893,111 @@ function ReclamarRecompensaModal({ barco, nivel, usuario, onClose, onReclamar })
   );
 }
 
+/* ── Chat de una reserva (cliente ↔ propietario) ──────────────────────
+   Solo existe después de reservar, y no se cierra al terminar el alquiler: los líos ("me falta
+   un cabo", "¿y mi fianza?") salen justo entonces, y si aquí se cierra la puerta se van al
+   WhatsApp — donde no queda constancia de nada el día que haya una discusión.
+   Sin websockets: se relee cada 8 segundos mientras la ventana está abierta. Para una
+   conversación de dos personas coordinando una entrega, sobra. */
+function ChatModal({ reserva, usuario, otro, onClose, onLeidos }) {
+  const [mensajes, setMensajes] = useState([]);
+  const [texto, setTexto] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState(null);
+  const finRef = useRef(null);
+
+  const recargar = async () => {
+    try {
+      const lista = await listarMensajes(reserva.id);
+      setMensajes(lista);
+      const sinLeer = lista.some((m) => m.autor_id !== usuario.id && !m.leido_at);
+      if (sinLeer) {
+        await marcarLeidos(reserva.id, usuario.id);
+        onLeidos(reserva.id);
+      }
+    } catch (err) {
+      setError("No se han podido cargar los mensajes.");
+    }
+  };
+
+  useEffect(() => {
+    recargar();
+    const cada8s = setInterval(recargar, 8000);
+    return () => clearInterval(cada8s);
+  }, [reserva.id]);
+
+  useEffect(() => { finRef.current?.scrollIntoView({ block: "end" }); }, [mensajes.length]);
+
+  const enviar = async () => {
+    const limpio = texto.trim();
+    if (!limpio || enviando) return;
+    setEnviando(true);
+    setError(null);
+    try {
+      const nuevo = await enviarMensaje(reserva.id, usuario.id, limpio);
+      setMensajes((p) => [...p, nuevo]);
+      setTexto("");
+    } catch (err) {
+      setError("No se ha podido enviar. Inténtalo otra vez.");
+    }
+    setEnviando(false);
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal modal-chat" onClick={(e) => e.stopPropagation()}>
+        <button className="modal-x" onClick={onClose}><X size={20} /></button>
+        <h2 className="serif modal-tit">{otro}</h2>
+        <p className="modal-sub">{reserva.barco} · {reserva.detalle}</p>
+
+        <div className="chat-hilo">
+          {mensajes.length === 0 && (
+            <p className="mini-nota">Aún no hay mensajes. Escríbele para acordar la hora, el punto de encuentro o lo que haga falta llevar.</p>
+          )}
+          {mensajes.map((m) => {
+            const mio = m.autor_id === usuario.id;
+            return (
+              <div key={m.id} className={`chat-msg ${mio ? "mio" : ""}`}>
+                <p>{m.texto}</p>
+                <span className="chat-hora">{new Date(m.created_at).toLocaleString("es-ES", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
+              </div>
+            );
+          })}
+          <div ref={finRef} />
+        </div>
+
+        {error && <p className="mini-nota mini-nota-error">{error}</p>}
+        <div className="chat-escribir">
+          <textarea
+            rows={2}
+            value={texto}
+            maxLength={2000}
+            placeholder="Escribe tu mensaje…"
+            onChange={(e) => setTexto(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }}
+          />
+          <button className="btn-primario" disabled={!texto.trim() || enviando} onClick={enviar}>
+            {enviando ? "…" : "Enviar"}
+          </button>
+        </div>
+        <p className="mini-nota">Hablad por aquí: queda constancia de lo acordado. Si algún día hay una discusión por la fianza o un desperfecto, es lo que os protege a los dos.</p>
+      </div>
+    </div>
+  );
+}
+
+/* Botón de "Mensajes" con el punto de los no leídos. Va en las dos caras de la reserva: la del
+   cliente y la del propietario. */
+function BotonChat({ reserva, mensajes, miId, onAbrir }) {
+  const delHilo = mensajes.filter((m) => m.reserva_id === reserva.id);
+  const sinLeer = delHilo.filter((m) => m.autor_id !== miId && !m.leido_at).length;
+  return (
+    <button className={`btn-sec sm ${sinLeer ? "con-aviso" : ""}`} onClick={() => onAbrir(reserva)}>
+      <MessageCircle size={14} /> Mensajes{sinLeer > 0 && <span className="chat-punto">{sinLeer}</span>}
+    </button>
+  );
+}
+
 /* ── Modal cancelación por el propietario ────────────────────────── */
 const MOTIVO_TXT = {
   averia: "Una avería mecánica impide salir.",
@@ -1050,7 +1156,7 @@ function estadoFidelidad(count) {
 }
 
 /* ── Panel de usuario ────────────────────────────────────────────── */
-function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, cobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onReclamarFianza, recompensas, onReclamarRecompensa, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEditarAnuncio, onEliminarAnuncio }) {
+function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, cobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onReclamarFianza, recompensas, onReclamarRecompensa, mensajes, onAbrirChat, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEditarAnuncio, onEliminarAnuncio }) {
   const esCliente = usuario.rol === "cliente" || usuario.rol === "ambas";
   const esProp = usuario.rol === "propietario" || usuario.rol === "ambas";
   const activas = reservas.filter((r) => r.estado !== "finalizada").slice().sort((a, b) => new Date(a.inicioISO) - new Date(b.inicioISO));
@@ -1098,8 +1204,8 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
             <h2 className="serif sec-t"><CalendarCheck size={18} /> Próxima reserva</h2>
             {proxima ? (<div className="prox"><div><span className="estado confirmada">Confirmada</span><p className="prox-nombre">{proxima.barco}</p><p className="prox-sub">{proxima.puerto} · {proxima.detalle}</p></div><div className="prox-fin"><span className="precio"><b>{eur(proxima.total)}</b></span>
               {new Date() > new Date(proxima.finISO)
-                ? <button className="btn-sec sm" onClick={() => onFinalizar(proxima)}>Marcar como finalizada</button>
-                : <div className="li-acciones"><button className="btn-sec sm" onClick={onExplorar}>Gestionar</button><button className="btn-cancelar sm" onClick={() => onCancelar(proxima)}>Cancelar</button></div>}
+                ? <div className="li-acciones"><BotonChat reserva={proxima} mensajes={mensajes} miId={usuario.id} onAbrir={onAbrirChat} /><button className="btn-sec sm" onClick={() => onFinalizar(proxima)}>Marcar como finalizada</button></div>
+                : <div className="li-acciones"><BotonChat reserva={proxima} mensajes={mensajes} miId={usuario.id} onAbrir={onAbrirChat} /><button className="btn-cancelar sm" onClick={() => onCancelar(proxima)}>Cancelar</button></div>}
             </div></div>)
               : <Vacio txt="No tienes reservas activas." cta="Explorar" onCta={onExplorar} />}
             {proxima && proxima.fianzaEstado && <FianzaEstado reserva={proxima} />}
@@ -1114,9 +1220,12 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
                 <li key={r.id} className="lista-item lista-item-col">
                   <div className="li-fila">
                     <div><p className="li-nombre">{r.barco}</p><p className="li-sub">{r.puerto} · {r.detalle}</p></div>
-                    {r.estado === "finalizada" ? <span className="estado confirmada">Finalizada</span>
-                      : yaTermino ? <button className="btn-sec sm" onClick={() => onFinalizar(r)}>Marcar finalizada</button>
-                        : <div className="li-acciones"><button className="btn-sec sm" onClick={onExplorar}>Repetir</button><button className="btn-cancelar sm" onClick={() => onCancelar(r)}>Cancelar</button></div>}
+                    <div className="li-acciones">
+                      <BotonChat reserva={r} mensajes={mensajes} miId={usuario.id} onAbrir={onAbrirChat} />
+                      {r.estado === "finalizada" ? <span className="estado confirmada">Finalizada</span>
+                        : yaTermino ? <button className="btn-sec sm" onClick={() => onFinalizar(r)}>Marcar finalizada</button>
+                          : <button className="btn-cancelar sm" onClick={() => onCancelar(r)}>Cancelar</button>}
+                    </div>
                   </div>
                   {r.fianzaEstado && <FianzaEstado reserva={r} compacta />}
                   {r.resena && <p className="mini-nota">Tu reseña: {"★".repeat(r.resena.estrellas)}{"☆".repeat(5 - r.resena.estrellas)} {r.resena.comentario && `· "${r.resena.comentario}"`}</p>}
@@ -1240,16 +1349,19 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
                 <li key={r.id} className="lista-item lista-item-col">
                   <div className="li-fila">
                     <div><p className="li-nombre">{r.barco}</p><p className="li-sub">{r.cliente} · {eur(r.total)}</p></div>
-                    {r.estado === "finalizada" ? <span className="estado confirmada">Finalizada</span>
-                      : yaTermino ? (
-                        <div className="li-acciones">
-                          {r.fianzaEstado && r.fianzaEstado !== "liberada" && r.fianzaEstado !== "cobrada" && (
-                            <button className="btn-cancelar sm" onClick={() => onReclamarFianza(r)}>Hubo daños</button>
-                          )}
-                          <button className="btn-sec sm" onClick={() => onFinalizarRecibida(r.id)}>Dar visto bueno y finalizar</button>
-                        </div>
-                      )
-                        : <div className="li-acciones"><span className="estado revision">Próxima</span><button className="btn-cancelar sm" onClick={() => onCancelarRecibida(r)}>Cancelar</button></div>}
+                    <div className="li-acciones">
+                      <BotonChat reserva={r} mensajes={mensajes} miId={usuario.id} onAbrir={onAbrirChat} />
+                      {r.estado === "finalizada" ? <span className="estado confirmada">Finalizada</span>
+                        : yaTermino ? (
+                          <>
+                            {r.fianzaEstado && r.fianzaEstado !== "liberada" && r.fianzaEstado !== "cobrada" && (
+                              <button className="btn-cancelar sm" onClick={() => onReclamarFianza(r)}>Hubo daños</button>
+                            )}
+                            <button className="btn-sec sm" onClick={() => onFinalizarRecibida(r.id)}>Dar visto bueno y finalizar</button>
+                          </>
+                        )
+                          : <><span className="estado revision">Próxima</span><button className="btn-cancelar sm" onClick={() => onCancelarRecibida(r)}>Cancelar</button></>}
+                    </div>
                   </div>
                   {r.fianzaEstado && (
                     <span className="fianza-badge">
@@ -2093,6 +2205,8 @@ export default function App() {
   const [favoritos, setFavoritos] = useState([]);
   const [cancelando, setCancelando] = useState(null);
   const [reclamandoRecompensa, setReclamandoRecompensa] = useState(null);  // { barco, nivel }
+  const [mensajes, setMensajes] = useState([]);            // todos los de mis reservas (RLS ya filtra)
+  const [chatAbierto, setChatAbierto] = useState(null);    // { reserva, otro }
   const [recompensas, setRecompensas] = useState([]);                      // las mías, de "Cuida tu Barco"
   const [recompensasPendientes, setRecompensasPendientes] = useState([]);  // las que el admin debe servir
   const [cancelandoProp, setCancelandoProp] = useState(null);
@@ -2168,9 +2282,36 @@ export default function App() {
     listarReservasRecibidas(usuario.id).then(setReservasRecibidas).catch(console.error);
     listarFavoritos(usuario.id).then(setFavoritos).catch(console.error);
     listarMisRecompensas(usuario.id).then(setRecompensas).catch(console.error);
+    // Sin `where`: RLS solo devuelve los mensajes de las reservas en las que participo.
+    listarMisMensajes().then(setMensajes).catch(console.error);
     // Estado real de sus cobros: "conectado" no significa "puede cobrar".
     if (usuario.stripeAccountId) estadoCobros().then(setCobros).catch(console.error);
   }, [usuario?.id]);
+
+  /* Los mensajes nuevos que llegan mientras tienes el panel abierto: sin esto, el punto rojo de
+     "tienes mensajes" solo aparecería al recargar la página. */
+  useEffect(() => {
+    if (!usuario || vista !== "panel") return;
+    const refrescar = () => listarMisMensajes().then(setMensajes).catch(console.error);
+    const cada30s = setInterval(refrescar, 30000);
+    const alVolverALaPestana = () => { if (!document.hidden) refrescar(); };
+    document.addEventListener("visibilitychange", alVolverALaPestana);
+    return () => {
+      clearInterval(cada30s);
+      document.removeEventListener("visibilitychange", alVolverALaPestana);
+    };
+  }, [usuario?.id, vista]);
+
+  /* Con quién hablo: si la reserva es mía como cliente, el otro es el propietario; si la he
+     recibido, el otro es el cliente (cuyo nombre sí guarda la reserva). */
+  const abrirChat = (reserva) => {
+    const laRecibo = reservasRecibidas.some((r) => r.id === reserva.id);
+    setChatAbierto({ reserva, otro: laRecibo ? reserva.cliente : `Propietario de ${reserva.barco}` });
+  };
+
+  const marcarHiloLeido = (reservaId) =>
+    setMensajes((p) => p.map((m) => (m.reserva_id === reservaId && m.autor_id !== usuario.id && !m.leido_at
+      ? { ...m, leido_at: new Date().toISOString() } : m)));
 
   useEffect(() => {
     if (!esAdmin) return;
@@ -2537,10 +2678,19 @@ export default function App() {
           onSalir={cerrarSesion}
         />
       )}
-      {vista === "panel" && usuario && !esAdmin && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={setRechazandoAnuncio} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} cobros={cobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} recompensas={recompensas} onReclamarRecompensa={(barco, nivel) => setReclamandoRecompensa({ barco, nivel })} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEditarAnuncio={(b) => { setEditandoAnuncio(b); ir("editar"); }} onEliminarAnuncio={setEliminandoAnuncio} />)}
+      {vista === "panel" && usuario && !esAdmin && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={setRechazandoAnuncio} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} cobros={cobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} recompensas={recompensas} onReclamarRecompensa={(barco, nivel) => setReclamandoRecompensa({ barco, nivel })} mensajes={mensajes} onAbrirChat={abrirChat} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEditarAnuncio={(b) => { setEditandoAnuncio(b); ir("editar"); }} onEliminarAnuncio={setEliminandoAnuncio} />)}
 
       {auth && <AuthModal tab={auth.tab} rolPre={auth.rolPre} onClose={() => setAuth(null)} onCambiarTab={(t) => setAuth((a) => ({ ...a, tab: t }))} onAuth={completarAuth} />}
       {cancelando && <CancelarModal reserva={cancelando} onClose={() => setCancelando(null)} onConfirmar={confirmarCancelacion} />}
+      {chatAbierto && (
+        <ChatModal
+          reserva={chatAbierto.reserva}
+          usuario={usuario}
+          otro={chatAbierto.otro}
+          onClose={() => setChatAbierto(null)}
+          onLeidos={marcarHiloLeido}
+        />
+      )}
       {reclamandoRecompensa && (
         <ReclamarRecompensaModal
           barco={reclamandoRecompensa.barco}
@@ -2801,6 +2951,19 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .opciones-fila{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
 .opcion{padding:9px 14px;min-height:40px;border:1px solid var(--linea);border-radius:10px;background:#fff;font-size:13.5px;font-weight:600;color:var(--slate);cursor:pointer}
 .opcion.sel{border-color:var(--noche);background:var(--noche);color:var(--arena)}
+/* Chat de la reserva */
+.modal-chat{display:flex;flex-direction:column;max-height:82vh}
+.chat-hilo{flex:1;overflow-y:auto;min-height:160px;max-height:44vh;display:flex;flex-direction:column;gap:8px;padding:12px;margin:10px 0;background:var(--arena2);border-radius:12px}
+.chat-msg{max-width:78%;align-self:flex-start;background:#fff;border:1px solid var(--linea);border-radius:12px;padding:9px 12px}
+.chat-msg.mio{align-self:flex-end;background:var(--noche);border-color:var(--noche);color:var(--arena)}
+.chat-msg p{font-size:14px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.chat-hora{display:block;margin-top:4px;font-size:11px;color:var(--muted)}
+.chat-msg.mio .chat-hora{color:var(--brisa)}
+.chat-escribir{display:flex;gap:8px;align-items:flex-end}
+.chat-escribir textarea{flex:1;resize:none;padding:10px 12px;border:1px solid var(--linea);border-radius:10px;font:inherit;font-size:14px}
+.chat-escribir .btn-primario{width:auto;padding:12px 18px;white-space:nowrap}
+.chat-punto{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;margin-left:6px;padding:0 5px;border-radius:9px;background:var(--coral);color:#fff;font-size:11px;font-weight:700}
+.btn-sec.con-aviso{border-color:var(--coral);color:var(--coral)}
 .licencia-box .field{margin-top:8px;margin-bottom:8px}
 .fotos-drop.sm{padding:12px;font-size:11.5px;margin-bottom:8px}
 .verif-ok{display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;color:#3B7A5E;margin-top:4px}

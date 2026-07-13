@@ -141,6 +141,23 @@ propietarios con personas que quieren disfrutar del mar. Lema: "Alquila el mar".
     `http://localhost:5173` (los enlaces de los correos no habrían funcionado para nadie);
     ahora es `https://yachtoday.com`, con `localhost` aún permitido para desarrollo.
 
+## Chat entre cliente y propietario (`supabase/mensajes.sql`)
+Cada reserva tiene su hilo, con aviso por correo (`notificar-mensaje`, con un **freno de 15 min**
+para que cinco mensajes seguidos no sean cinco correos) y punto rojo de no leídos en el panel.
+- **Aparece solo DESPUÉS de reservar, a propósito.** Un chat abierto antes de pagar acaba siendo
+  un intercambio de teléfonos para quedar por fuera: ahí los dos pierden lo que les protege (el
+  cobro garantizado y la fianza) y la plataforma su comisión. Pagada la reserva, no hay nada que
+  fugar y sí mucho que coordinar.
+- **No se cierra al terminar el alquiler** (decisión de Eric): los líos ("falta un cabo", "¿y mi
+  fianza?") salen justo entonces, y si se cierra la puerta se van al WhatsApp, donde no queda
+  constancia el día que haya una discusión.
+- Quién lee y escribe en cada hilo lo decide el servidor (`participa_en_reserva`), no la web. Y
+  **quien recibe un mensaje no puede reescribirlo** (trigger `mensajes_no_editar`): si no, podría
+  falsificar lo que dijo el otro y enseñarlo como prueba en una discusión de fianza — justo el
+  escenario para el que sirve el chat. Lo único editable de un mensaje ajeno es `leido_at`.
+- Verificado atacando la API con sesiones reales (2026-07-13): leer un hilo ajeno → vacío;
+  escribir en él → `42501`; firmar como el otro → `42501`; reescribir su mensaje → rechazado.
+
 ## Producción: cuidado con las claves largas en paneles web
 `VITE_SUPABASE_ANON_KEY` se pegó a mano en el panel de Vercel y quedó **cortada a mitad
 del JWT** por un salto de línea (llegaban 132 de 208 caracteres): la web publicada no

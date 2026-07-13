@@ -5,6 +5,7 @@ import { listarMisReservas, listarReservasRecibidas, actualizarReserva, notifica
 import { Legal } from "./Legal";
 import { listarFavoritos, anadirFavorito, quitarFavorito } from "./lib/favoritos";
 import { iniciarPago, conectarCobros, cobrarFianza, estadoCobros } from "./lib/pagos";
+import { listarMisRecompensas, reclamarRecompensa, listarRecompensasPendientes, marcarRecompensaEnviada } from "./lib/recompensas";
 import {
   Anchor, Search, MapPin, Users, Star, Ship, Waves, ChevronRight, Check,
   Plus, ArrowLeft, Ruler, Gauge, ShieldCheck, Menu, X, Sailboat, Info,
@@ -802,19 +803,90 @@ function EliminarAnuncioModal({ anuncio, error, onClose, onConfirmar }) {
   );
 }
 
-/* ── Modal especificaciones de motor ─────────────────────────────── */
-function EspecificacionesModal({ barco, onClose, onGuardar }) {
-  const [modelo, setModelo] = useState(barco.motorModelo || "");
-  const [notas, setNotas] = useState(barco.motorNotas || "");
+/* ── Modal para reclamar una recompensa de "Cuida tu Barco" ───────────
+   Aquí antes había una pantalla de "especificaciones de motor" que se desbloqueaba al llegar
+   al hito, guardaba el modelo SOLO en la memoria del navegador (se perdía al recargar) y no
+   avisaba a nadie: el propietario no tenía forma de reclamar su premio ni el admin de saber
+   que alguien lo había ganado. El modelo de motor sigue haciendo falta —para que el filtro
+   encaje— pero ahora es parte de la solicitud, que sí se guarda y sí se notifica. */
+function ReclamarRecompensaModal({ barco, nivel, usuario, onClose, onReclamar }) {
+  const [filtro, setFiltro] = useState("aceite");
+  const [motor, setMotor] = useState("");
+  const [direccion, setDireccion] = useState("");
+  const [telefono, setTelefono] = useState(usuario.telefono || "");
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState(null);
+
+  const esKit = nivel === 1;
+  const listo = esKit ? motor.trim() && direccion.trim() : true;
+
+  const enviar = async () => {
+    if (!listo || enviando) return;
+    setEnviando(true);
+    setError(null);
+    try {
+      await onReclamar({
+        anuncio_id: barco.id,
+        propietario_id: usuario.id,
+        nivel,
+        filtro: esKit ? filtro : null,
+        motor: esKit ? motor.trim() : null,
+        direccion: esKit ? direccion.trim() : null,
+        telefono: telefono.trim() || null,
+      });
+      onClose();
+    } catch (err) {
+      // El hito lo comprueba Postgres: si no está alcanzado, el mensaje viene de allí.
+      setError(err?.message || "No se ha podido reclamar la recompensa. Inténtalo de nuevo.");
+      setEnviando(false);
+    }
+  };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <button className="modal-x" onClick={onClose}><X size={20} /></button>
-        <h2 className="serif modal-tit">Especificaciones de {barco.nombre}</h2>
-        <p className="modal-sub">Has desbloqueado esta pestaña al completar alquileres en este barco. Cuéntanos el motor exacto para que tu kit de "Cuida tu Barco" encaje a la perfección.</p>
-        <Ico label="Modelo de motor" icon={Gauge}><input value={modelo} onChange={(e) => setModelo(e.target.value)} placeholder="Yamaha F150 4T" /></Ico>
-        <label className="field"><span>Notas / especificaciones adicionales</span><textarea rows={3} value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Referencia del filtro de aceite, tipo de combustible…" /></label>
-        <button className="btn-primario ancho" onClick={() => { onGuardar(modelo, notas); onClose(); }}>Guardar especificaciones</button>
+        <h2 className="serif modal-tit">{esKit ? "Reclama tu kit" : "Reclama tu descuento"}</h2>
+        <p className="modal-sub">
+          {esKit
+            ? `${barco.nombre} ha llegado a ${OWNER_NIVELES[0].min} alquileres. Te mandamos por correo el filtro que elijas y una garrafa de aceite de 5 L, sin coste.`
+            : `${barco.nombre} ha llegado a ${OWNER_NIVELES[1].min} alquileres: tienes un 15% de descuento en la limpieza del casco o del interior. La hace Spen Mechanics desplazándose a tu puerto (${SPEN_ZONA}).`}
+        </p>
+
+        {esKit ? (
+          <>
+            <label className="field"><span>¿Qué filtro necesitas?</span>
+              <div className="opciones-fila">
+                {FILTROS.map((f) => (
+                  <button key={f.id} type="button" className={`opcion ${filtro === f.id ? "sel" : ""}`} onClick={() => setFiltro(f.id)}>{f.t}</button>
+                ))}
+              </div>
+            </label>
+            <Ico label="Modelo de motor" icon={Gauge}>
+              <input value={motor} onChange={(e) => setMotor(e.target.value)} placeholder="Yamaha F150 4T" />
+            </Ico>
+            <p className="mini-nota">Sin el modelo exacto no podemos acertar con el filtro. Si tienes la referencia del recambio, añádela aquí también.</p>
+            <label className="field"><span>Dirección de envío</span>
+              <textarea rows={2} value={direccion} onChange={(e) => setDireccion(e.target.value)} placeholder="Calle, número, piso · Código postal · Población" />
+            </label>
+            <label className="field"><span>Teléfono (para la mensajería)</span>
+              <input value={telefono} onChange={(e) => setTelefono(e.target.value)} placeholder="600 000 000" />
+            </label>
+            <p className="mini-nota">Usamos la dirección solo para enviarte el kit. Ver la <b>política de privacidad</b>.</p>
+          </>
+        ) : (
+          <>
+            <label className="field"><span>Teléfono (para concertar la cita)</span>
+              <input value={telefono} onChange={(e) => setTelefono(e.target.value)} placeholder="600 000 000" />
+            </label>
+            <p className="mini-nota">Al reclamarlo te apuntamos el descuento. Cuando quieras la limpieza, avisa a Spen Mechanics y te lo aplicamos en la factura.</p>
+          </>
+        )}
+
+        {error && <p className="mini-nota mini-nota-error">{error}</p>}
+        <button className="btn-primario ancho" disabled={!listo || enviando} onClick={enviar}>
+          {enviando ? "Enviando…" : esKit ? "Reclamar mi kit" : "Reclamar mi descuento"}
+        </button>
       </div>
     </div>
   );
@@ -926,8 +998,13 @@ const INSIGNIAS = [
    El material (paddle surf y kayak) queda fuera: no tiene motor que mantener. */
 const SPEN_ZONA = "Comunidad Valenciana";
 const OWNER_NIVELES = [
-  { min: 5, premio: "Kit de filtros (aire, aceite y gasoil) y una garrafa de aceite de 5 L, por correo a cualquier punto de España." },
+  { min: 5, premio: "Un filtro a elegir (aire, aceite o gasoil) y una garrafa de aceite de 5 L, por correo a cualquier punto de España." },
   { min: 15, premio: `15% de descuento en la limpieza del casco o del interior. La hace Spen Mechanics desplazándose a tu puerto (${SPEN_ZONA}).` },
+];
+const FILTROS = [
+  { id: "aire", t: "Filtro de aire" },
+  { id: "aceite", t: "Filtro de aceite" },
+  { id: "gasoil", t: "Filtro de gasoil" },
 ];
 const FAQ = [
   { cat: "Reservar", preguntas: [
@@ -950,7 +1027,7 @@ const FAQ = [
   ]},
   { cat: "Programa de recompensas", preguntas: [
     { p: "¿Qué gano yo por alquilar más?", r: "A la tercera reserva, los gastos de gestión te salen a mitad de precio; a la quinta, no pagas ninguno. Después el contador se reinicia y vuelve a empezar. Se aplica solo y lo ves desglosado antes de pagar. Los niveles (Captain, Navigator, Admiral) son un distintivo: no prometen nada aparte de eso." },
-    { p: "¿Qué es \"Cuida tu Barco\"?", r: "El programa para propietarios. Cuando uno de tus anuncios llega a 5 alquileres finalizados, te mandamos por correo un kit de filtros (aire, aceite y gasoil) con una garrafa de aceite de 5 L. A los 15, tienes un 15% de descuento en la limpieza del casco o del interior, que hacemos nosotros desplazándonos a tu puerto (de momento, solo en la Comunidad Valenciana). Lo sirve Spen Mechanics S.L., nuestro taller. El paddle surf y el kayak no entran: no tienen motor." },
+    { p: "¿Qué es \"Cuida tu Barco\"?", r: "El programa para propietarios. Cuando uno de tus anuncios llega a 5 alquileres finalizados, te avisamos en tu panel: eliges el filtro que necesitas (aire, aceite o gasoil), nos dices el modelo de motor y a dónde te lo mandamos, y te llega con una garrafa de aceite de 5 L. A los 15 alquileres, tienes un 15% de descuento en la limpieza del casco o del interior, que hacemos nosotros desplazándonos a tu puerto (de momento, solo en la Comunidad Valenciana). Lo sirve Spen Mechanics S.L., nuestro taller. El paddle surf y el kayak no entran: no tienen motor." },
   ]},
 ];
 const CANCELACION_TRAMOS = [
@@ -973,7 +1050,7 @@ function estadoFidelidad(count) {
 }
 
 /* ── Panel de usuario ────────────────────────────────────────────── */
-function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, cobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onReclamarFianza, onEspecificar, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEditarAnuncio, onEliminarAnuncio }) {
+function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, cobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onReclamarFianza, recompensas, onReclamarRecompensa, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEditarAnuncio, onEliminarAnuncio }) {
   const esCliente = usuario.rol === "cliente" || usuario.rol === "ambas";
   const esProp = usuario.rol === "propietario" || usuario.rol === "ambas";
   const activas = reservas.filter((r) => r.estado !== "finalizada").slice().sort((a, b) => new Date(a.inicioISO) - new Date(b.inicioISO));
@@ -1095,8 +1172,15 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
               const completadasBarco = reservasRecibidas.filter((r) => r.barcoId === b.id && r.estado === "finalizada").length;
               /* Un kayak no tiene motor: prometerle "filtros de aire, aceite y gasoil" era absurdo. */
               const cuidaBarco = b.clase !== "material";
-              const desbloqueado = cuidaBarco && completadasBarco >= OWNER_NIVELES[0].min;
-              const siguienteBarco = OWNER_NIVELES.find((n) => completadasBarco < n.min);
+              const siguienteBarco = cuidaBarco ? OWNER_NIVELES.find((n) => completadasBarco < n.min) : null;
+              // Lo ya reclamado (esté servido o no) sale de la tabla `recompensas`, no de aquí:
+              // así el premio sobrevive a recargar la página y el admin sabe qué debe.
+              const yaReclamados = recompensas.filter((r) => r.anuncio_id === b.id);
+              const porReclamar = cuidaBarco
+                ? OWNER_NIVELES
+                    .map((n, i) => ({ ...n, nivel: i + 1 }))
+                    .filter((n) => completadasBarco >= n.min && !yaReclamados.some((r) => r.nivel === n.nivel))
+                : [];
               const enSieteDias = new Date(Date.now() + 7 * 86400000);
               const sinReservasProximas = !reservasRecibidas.some((r) => r.barcoId === b.id && r.estado !== "finalizada" && new Date(r.inicioISO) > new Date() && new Date(r.inicioISO) < enSieteDias);
               return (
@@ -1117,11 +1201,27 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
                   )}
                   {b.estado === "En revisión" && <p className="mini-nota">Lo estamos revisando. Te avisamos por correo en cuanto esté publicado.</p>}
                   <p className="mini-nota">{completadasBarco} alquiler{completadasBarco === 1 ? "" : "es"} completados{cuidaBarco ? (siguienteBarco ? ` · faltan ${siguienteBarco.min - completadasBarco} para el siguiente premio de "Cuida tu Barco"` : " · ¡nivel máximo!") : ""}</p>
-                  {desbloqueado && (
-                    <button className="btn-sec sm" onClick={() => onEspecificar(b)}>
-                      <Gauge size={14} /> {b.motorModelo ? `Motor: ${b.motorModelo}` : "Añadir especificaciones de motor"}
-                    </button>
-                  )}
+
+                  {porReclamar.map((n) => (
+                    <div key={n.nivel} className="premio-listo">
+                      <Gift size={16} />
+                      <div style={{ flex: 1 }}>
+                        <b>Has ganado tu recompensa de "Cuida tu Barco"</b>
+                        <p>{n.premio}</p>
+                      </div>
+                      <button className="btn-primario sm" onClick={() => onReclamarRecompensa(b, n.nivel)}>Reclamar</button>
+                    </div>
+                  ))}
+
+                  {yaReclamados.map((r) => (
+                    <span key={r.id} className="fianza-badge">
+                      <Gift size={12} style={{ verticalAlign: "-2px" }} />{" "}
+                      {r.nivel === 1
+                        ? (r.estado === "enviada" ? "Tu kit ya está enviado" : "Kit reclamado · lo estamos preparando")
+                        : (r.estado === "enviada" ? "Descuento del 15% activo en Spen Mechanics" : "Descuento reclamado · te avisamos enseguida")}
+                      {r.nota_admin ? ` · ${r.nota_admin}` : ""}
+                    </span>
+                  ))}
                   {sinReservasProximas && !b.ultima_hora_descuento && <UltimaHoraAlerta barco={b} onActivar={onActivarUltimaHora} />}
                   {b.ultima_hora_descuento > 0 && <span className="fianza-badge"><Zap size={12} style={{ verticalAlign: "-2px" }} /> Última hora: -{b.ultima_hora_descuento}% en los alquileres que empiecen esta semana <button className="link-inline" onClick={() => onDesactivarUltimaHora(b.id)}>Desactivar</button></span>}
                 </li>
@@ -1175,9 +1275,10 @@ const Vacio = ({ txt, cta, onCta, primario }) => (<div className="mini-vacio"><p
    favoritos de Eric — mezclando su cuenta de cliente con su trabajo de revisor. Aquí tiene
    su sitio propio, y a la vista lo único que de verdad importa: qué está esperando y desde
    cuándo, porque un propietario que espera dos días se va. */
-function PanelAdmin({ anunciosRevision, anuncios, onAprobar, onRechazar, onVerDocumento, onExplorar, onSalir }) {
+function PanelAdmin({ anunciosRevision, anuncios, recompensasPendientes, onMarcarEnviada, onAprobar, onRechazar, onVerDocumento, onExplorar, onSalir }) {
   const hoy = new Date().toISOString().slice(0, 10);
   const diasEsperando = (a) => Math.floor((Date.now() - new Date(a.created_at).getTime()) / 86400000);
+  const [nota, setNota] = useState({});   // nº de seguimiento por recompensa, antes de marcarla
 
   return (
     <div className="admin">
@@ -1194,6 +1295,7 @@ function PanelAdmin({ anunciosRevision, anuncios, onAprobar, onRechazar, onVerDo
 
       <div className="admin-cifras">
         <div className="admin-cifra"><span className="admin-num">{anunciosRevision.length}</span><span className="admin-lab">esperando revisión</span></div>
+        <div className="admin-cifra"><span className="admin-num">{recompensasPendientes.length}</span><span className="admin-lab">recompensas por servir</span></div>
         <div className="admin-cifra"><span className="admin-num">{anuncios.length}</span><span className="admin-lab">publicados en la web</span></div>
       </div>
 
@@ -1236,6 +1338,52 @@ function PanelAdmin({ anunciosRevision, anuncios, onAprobar, onRechazar, onVerDo
         })}</ul>
       ) : (
         <div className="vacio"><ShieldCheck size={30} /><p>No hay nada esperando. Todo al día.</p></div>
+      )}
+
+      {/* "Cuida tu Barco" solo es un programa de verdad si alguien sirve los premios. Esta es
+          la lista de lo que hay que mandar (o aplicar), y de quién lo espera. */}
+      <h2 className="serif bloque-tit">Recompensas por servir</h2>
+      {recompensasPendientes.length ? (
+        <ul className="lista">{recompensasPendientes.map((r) => {
+          const dias = diasEsperando(r);
+          const premio = r.nivel === 1
+            ? `${FILTROS.find((f) => f.id === r.filtro)?.t || "Filtro"} + garrafa de aceite de 5 L`
+            : "15% de descuento en la limpieza (Spen va al puerto)";
+          return (
+            <li key={r.id} className="lista-item lista-item-col">
+              <div className="li-fila">
+                <div>
+                  <p className="li-nombre">{premio}</p>
+                  <p className="li-sub">{r.anuncios?.nombre || `Anuncio ${r.anuncio_id}`} · nivel {r.nivel} · {dias === 0 ? "hoy" : dias === 1 ? "hace 1 día" : `hace ${dias} días`}</p>
+                </div>
+                <div className="li-acciones">
+                  <button className="btn-primario sm" onClick={() => onMarcarEnviada(r, nota[r.id])}>
+                    {r.nivel === 1 ? "Marcar como enviada" : "Marcar como aplicada"}
+                  </button>
+                </div>
+              </div>
+              <div className="li-doc">
+                {r.nivel === 1 ? (
+                  <>
+                    <span>Motor: <b>{r.motor || "no indicado"}</b></span>
+                    <span>Enviar a: <b>{r.direccion || "no indicada"}</b></span>
+                  </>
+                ) : (
+                  <span>Puerto: <b>{r.anuncios?.puerto || "—"}</b></span>
+                )}
+                {r.telefono && <span>Teléfono: <b>{r.telefono}</b></span>}
+              </div>
+              {r.nivel === 1 && (
+                <label className="field"><span>Nº de seguimiento (opcional, se lo mandamos por correo)</span>
+                  <input value={nota[r.id] || ""} onChange={(e) => setNota((p) => ({ ...p, [r.id]: e.target.value }))} placeholder="Correos · 1234ABCD" />
+                </label>
+              )}
+              {dias >= 3 && <p className="mini-nota mini-nota-error">Lleva {dias} días esperando su premio. Se lo prometiste tú.</p>}
+            </li>
+          );
+        })}</ul>
+      ) : (
+        <div className="vacio"><Gift size={30} /><p>Nada que enviar. Todo servido.</p></div>
       )}
     </div>
   );
@@ -1372,7 +1520,7 @@ function Propietarios({ onPublicar, onVentajas }) {
       <section className="seccion">
         <div className="premium">
           <Wrench size={22} />
-          <div style={{ flex: 1 }}><b>Y cuanto más alquilas, menos te cuesta mantenerlo</b><p>"Cuida tu Barco": a los 5 alquileres te mandamos un kit de filtros y una garrafa de aceite de 5 L; a los 15, un 15% de descuento en la limpieza del casco. Lo sirve nuestro propio taller, Spen Mechanics. Algo que ninguna otra plataforma te da.</p></div>
+          <div style={{ flex: 1 }}><b>Y cuanto más alquilas, menos te cuesta mantenerlo</b><p>"Cuida tu Barco": a los 5 alquileres te mandamos el filtro que elijas y una garrafa de aceite de 5 L; a los 15, un 15% de descuento en la limpieza del casco. Lo sirve nuestro propio taller, Spen Mechanics. Algo que ninguna otra plataforma te da.</p></div>
           <button className="btn-sec sm" style={{ marginLeft: "auto" }} onClick={onVentajas}>Ver el programa</button>
         </div>
       </section>
@@ -1417,7 +1565,7 @@ function SpenMechanics() {
           <div className="fid"><ShieldCheck size={20} /><div><b>Gestión de averías</b><p>Diagnóstico y reparación con repuestos de calidad, avisándote siempre antes de actuar y con presupuesto claro.</p></div></div>
           <div className="fid"><Sparkles size={20} /><div><b>Limpieza y abrillantado</b><p>Casco, cubierta e interior a punto, dentro y fuera del agua.</p></div></div>
         </div>
-        <p className="mini-nota">Si tu barco está publicado en Yacht Today, "Cuida tu Barco" te descuenta parte de todo esto: a los 5 alquileres, kit de filtros y aceite; a los 15, un 15% en la limpieza.</p>
+        <p className="mini-nota">Si tu barco está publicado en Yacht Today, "Cuida tu Barco" te descuenta parte de todo esto: a los 5 alquileres, el filtro que elijas y una garrafa de aceite; a los 15, un 15% en la limpieza.</p>
       </section>
 
       <section className="seccion">
@@ -1944,7 +2092,9 @@ export default function App() {
   const [reservasRecibidas, setReservasRecibidas] = useState([]);
   const [favoritos, setFavoritos] = useState([]);
   const [cancelando, setCancelando] = useState(null);
-  const [especificando, setEspecificando] = useState(null);
+  const [reclamandoRecompensa, setReclamandoRecompensa] = useState(null);  // { barco, nivel }
+  const [recompensas, setRecompensas] = useState([]);                      // las mías, de "Cuida tu Barco"
+  const [recompensasPendientes, setRecompensasPendientes] = useState([]);  // las que el admin debe servir
   const [cancelandoProp, setCancelandoProp] = useState(null);
   const [reclamandoFianza, setReclamandoFianza] = useState(null);
   const [editandoAnuncio, setEditandoAnuncio] = useState(null);
@@ -2017,6 +2167,7 @@ export default function App() {
     listarMisReservas(usuario.id).then(setReservas).catch(console.error);
     listarReservasRecibidas(usuario.id).then(setReservasRecibidas).catch(console.error);
     listarFavoritos(usuario.id).then(setFavoritos).catch(console.error);
+    listarMisRecompensas(usuario.id).then(setRecompensas).catch(console.error);
     // Estado real de sus cobros: "conectado" no significa "puede cobrar".
     if (usuario.stripeAccountId) estadoCobros().then(setCobros).catch(console.error);
   }, [usuario?.id]);
@@ -2024,14 +2175,19 @@ export default function App() {
   useEffect(() => {
     if (!esAdmin) return;
     listarAnunciosEnRevision().then(setAnunciosRevision).catch(console.error);
+    listarRecompensasPendientes().then(setRecompensasPendientes).catch(console.error);
   }, [esAdmin]);
 
-  /* La cola se quedaba congelada con lo que hubiera al abrir sesión: un anuncio que llegaba
-     mientras el panel estaba abierto no aparecía hasta recargar la página. Mientras el admin
-     mira el panel, se refresca sola cada minuto y al volver a la pestaña. */
+  /* Las colas se quedaban congeladas con lo que hubiera al abrir sesión: un anuncio (o una
+     recompensa) que llegaba mientras el panel estaba abierto no aparecía hasta recargar la
+     página. Mientras el admin mira el panel, se refrescan solas cada minuto y al volver a la
+     pestaña. */
   useEffect(() => {
     if (!esAdmin || vista !== "panel") return;
-    const refrescar = () => listarAnunciosEnRevision().then(setAnunciosRevision).catch(console.error);
+    const refrescar = () => {
+      listarAnunciosEnRevision().then(setAnunciosRevision).catch(console.error);
+      listarRecompensasPendientes().then(setRecompensasPendientes).catch(console.error);
+    };
     const cadaMinuto = setInterval(refrescar, 60000);
     const alVolverALaPestana = () => { if (!document.hidden) refrescar(); };
     document.addEventListener("visibilitychange", alVolverALaPestana);
@@ -2040,6 +2196,25 @@ export default function App() {
       document.removeEventListener("visibilitychange", alVolverALaPestana);
     };
   }, [esAdmin, vista]);
+
+  /* Reclamar una recompensa de "Cuida tu Barco". Que el hito esté alcanzado de verdad lo
+     comprueba Postgres (trigger `recompensas_comprobar`): si no, el insert falla y el modal
+     enseña el motivo. Aquí no se decide nada. */
+  const reclamarRecompensaBarco = async (payload) => {
+    const fila = await reclamarRecompensa(payload);
+    setRecompensas((p) => [...p, fila]);
+    setMensaje({
+      tipo: "ok",
+      texto: fila.nivel === 1
+        ? "¡Premio reclamado! Te mandamos el kit por correo y te avisamos en cuanto salga."
+        : "¡Descuento reclamado! Avisa a Spen Mechanics cuando quieras la limpieza.",
+    });
+  };
+
+  const servirRecompensa = async (recompensa, notaAdmin) => {
+    await marcarRecompensaEnviada(recompensa.id, notaAdmin);
+    setRecompensasPendientes((p) => p.filter((r) => r.id !== recompensa.id));
+  };
 
   const revisarAnuncio = async (anuncio, estado, motivoRechazo = null) => {
     await cambiarEstadoAnuncio(anuncio.id, estado, motivoRechazo);
@@ -2165,7 +2340,6 @@ export default function App() {
     setReservasRecibidas((p) => p.map((r) => (r.id === reservaId ? { ...r, fianzaEstado: "cobrada" } : r)));
     setReclamandoFianza(null);
   };
-  const guardarEspecificaciones = (id, motorModelo, motorNotas) => setMisBarcos((p) => p.map((b) => (b.id === id ? { ...b, motorModelo, motorNotas } : b)));
   const guardarResena = (estrellas, comentario) => {
     actualizarReserva(resenando.id, { estado: "finalizada", resena_estrellas: estrellas, resena_comentario: comentario || null }).catch(console.error);
     setReservas((p) => p.map((r) => (r.id === resenando.id ? { ...r, estado: "finalizada", resena: { estrellas, comentario } } : r)));
@@ -2354,6 +2528,8 @@ export default function App() {
         <PanelAdmin
           anunciosRevision={anunciosRevision}
           anuncios={anuncios}
+          recompensasPendientes={recompensasPendientes}
+          onMarcarEnviada={servirRecompensa}
           onAprobar={(a) => revisarAnuncio(a, "Publicado")}
           onRechazar={setRechazandoAnuncio}
           onVerDocumento={verDocumento}
@@ -2361,11 +2537,19 @@ export default function App() {
           onSalir={cerrarSesion}
         />
       )}
-      {vista === "panel" && usuario && !esAdmin && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={setRechazandoAnuncio} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} cobros={cobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} onEspecificar={setEspecificando} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEditarAnuncio={(b) => { setEditandoAnuncio(b); ir("editar"); }} onEliminarAnuncio={setEliminandoAnuncio} />)}
+      {vista === "panel" && usuario && !esAdmin && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={setRechazandoAnuncio} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} cobros={cobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} recompensas={recompensas} onReclamarRecompensa={(barco, nivel) => setReclamandoRecompensa({ barco, nivel })} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEditarAnuncio={(b) => { setEditandoAnuncio(b); ir("editar"); }} onEliminarAnuncio={setEliminandoAnuncio} />)}
 
       {auth && <AuthModal tab={auth.tab} rolPre={auth.rolPre} onClose={() => setAuth(null)} onCambiarTab={(t) => setAuth((a) => ({ ...a, tab: t }))} onAuth={completarAuth} />}
       {cancelando && <CancelarModal reserva={cancelando} onClose={() => setCancelando(null)} onConfirmar={confirmarCancelacion} />}
-      {especificando && <EspecificacionesModal barco={especificando} onClose={() => setEspecificando(null)} onGuardar={(modelo, notas) => guardarEspecificaciones(especificando.id, modelo, notas)} />}
+      {reclamandoRecompensa && (
+        <ReclamarRecompensaModal
+          barco={reclamandoRecompensa.barco}
+          nivel={reclamandoRecompensa.nivel}
+          usuario={usuario}
+          onClose={() => setReclamandoRecompensa(null)}
+          onReclamar={reclamarRecompensaBarco}
+        />
+      )}
       {cancelandoProp && <CancelarPropietarioModal reserva={cancelandoProp} onClose={() => setCancelandoProp(null)} onConfirmar={confirmarCancelacionPropietario} />}
       {reclamandoFianza && <ReclamarFianzaModal reserva={reclamandoFianza} onClose={() => setReclamandoFianza(null)} onConfirmar={confirmarReclamarFianza} />}
       {rechazandoAnuncio && <RechazarAnuncioModal anuncio={rechazandoAnuncio} onClose={() => setRechazandoAnuncio(null)} onConfirmar={(a, motivo) => revisarAnuncio(a, "Rechazado", motivo)} />}
@@ -2609,6 +2793,14 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .fianza-tit{display:flex;align-items:center;gap:6px;font-weight:700;font-size:13.5px;color:var(--mar)}
 .fianza-box p{font-size:12.5px;color:var(--slate);margin-top:5px;line-height:1.5}
 .fianza-badge{font-size:12px;font-weight:600;color:var(--mar);background:rgba(127,178,206,.15);padding:5px 10px;border-radius:8px}
+/* El aviso de "has ganado tu recompensa": en oro, porque es la única cosa buena que le
+   damos al propietario y tiene que verse por encima del resto de la ficha del anuncio. */
+.premio-listo{display:flex;align-items:center;gap:12px;margin-top:10px;padding:12px 14px;border-radius:12px;background:rgba(230,193,95,.16);border:1px solid rgba(230,193,95,.5);color:var(--noche)}
+.premio-listo b{font-size:13.5px}
+.premio-listo p{font-size:12.5px;color:var(--slate);line-height:1.5;margin-top:2px}
+.opciones-fila{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.opcion{padding:9px 14px;min-height:40px;border:1px solid var(--linea);border-radius:10px;background:#fff;font-size:13.5px;font-weight:600;color:var(--slate);cursor:pointer}
+.opcion.sel{border-color:var(--noche);background:var(--noche);color:var(--arena)}
 .licencia-box .field{margin-top:8px;margin-bottom:8px}
 .fotos-drop.sm{padding:12px;font-size:11.5px;margin-bottom:8px}
 .verif-ok{display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;color:#3B7A5E;margin-top:4px}

@@ -157,6 +157,11 @@ function Privacidad() {
             <td>Cobrar el alquiler y, si el propietario reporta daños, la fianza</td>
             <td>Ejecución del contrato</td>
           </tr>
+          <tr>
+            <td><b>Dirección postal y teléfono</b>, solo si reclamas un premio de "Cuida tu Barco"</td>
+            <td>Enviarte el kit de mantenimiento que has ganado, y que la mensajería pueda localizarte. No la pedimos para nada más ni la usamos para publicidad</td>
+            <td>Ejecución del contrato (el premio que te hemos prometido)</td>
+          </tr>
         </tbody>
       </table>
 

@@ -28,6 +28,19 @@ propietarios con personas que quieren disfrutar del mar. Lema: "Alquila el mar".
   interior, **desplazándose al puerto — solo en la Comunidad Valenciana**, que es hasta donde
   llega Spen hoy (`SPEN_ZONA`). El **material (SUP y kayak) no entra**: no tiene motor.
   Más el distintivo Propietario Premium.
+- **Cómo funciona de verdad** (`supabase/recompensas.sql`, `src/lib/recompensas.js`): al llegar al
+  hito, el propietario ve el aviso en "Mis anuncios" y **reclama**: elige filtro, da el modelo de
+  motor y la dirección. Eso crea una fila en `recompensas` (`solicitada`), avisa **al admin por
+  correo** (qué mandar y a dónde, Edge Function `notificar-recompensa`) y le manda al propietario
+  el acuse. El admin lo ve en **"Recompensas por servir"** de su panel y lo marca como **enviada**
+  (con nº de seguimiento opcional, que le llega al propietario por correo).
+  **La comprobación del hito la hace Postgres**, no la web: el trigger `recompensas_comprobar`
+  cuenta los alquileres `finalizada` de ese anuncio y rechaza el insert si no llega — esconder el
+  botón no protege nada. `unique (anuncio_id, nivel)` impide reclamar dos veces. Marcar algo como
+  `enviada` es **exclusivo del admin** (RLS): si no, el propietario se serviría a sí mismo.
+  Verificado de extremo a extremo el 2026-07-13, incluidos los tres ataques por la API con sesión
+  real: doble reclamación → `duplicate key`; nivel 2 con 5 alquileres → rechazado; kit para el
+  kayak → "el material no entra".
 - **Por qué se reescribió (2026-07-13):** prometía kits, limpiezas, revisiones y electrónica a
   los 3/10/20/40 alquileres comprados a precio de tienda — **el primer hito ya se comía toda la
   comisión de ese barco**, y un kayak desbloqueaba "filtros de aceite y gasoil". Se eliminaron

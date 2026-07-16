@@ -4,7 +4,7 @@ import { listarAnunciosPublicados, listarMisAnuncios, crearAnuncio, actualizarAn
 import { listarMisReservas, listarReservasRecibidas, actualizarReserva, notificarCancelacion } from "./lib/reservas";
 import { Legal } from "./Legal";
 import { listarFavoritos, anadirFavorito, quitarFavorito } from "./lib/favoritos";
-import { iniciarPago, conectarCobros, cobrarFianza, estadoCobros } from "./lib/pagos";
+import { iniciarPago, crearReservaEfectivo, conectarCobros, cobrarFianza, estadoCobros } from "./lib/pagos";
 import { listarMisRecompensas, reclamarRecompensa, listarRecompensasPendientes, marcarRecompensaEnviada } from "./lib/recompensas";
 import { listarMisMensajes, listarMensajes, enviarMensaje, marcarLeidos } from "./lib/mensajes";
 import {
@@ -14,7 +14,7 @@ import {
   CalendarCheck, ClipboardList, Sparkles, Fish, Wind, Gift, Trophy,
   Clock, Award, Waypoints, Handshake, Zap, CloudRain,
   ChevronDown, MessageCircle, HelpCircle, RotateCcw, Trash2, Wrench, FileText,
-  Wallet, CreditCard,
+  Wallet, CreditCard, AlertTriangle,
 } from "lucide-react";
 import fotoHero from "./assets/fotos/hero-845.jpg";
 import fotoMarina from "./assets/fotos/marina-5075093.jpg";
@@ -330,6 +330,8 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
   const [conPatron, setConPatron] = useState(item.patron === "incluido");
   const [enviandoReserva, setEnviandoReserva] = useState(false);
   const [errorReserva, setErrorReserva] = useState("");
+  const [metodoPago, setMetodoPago] = useState("tarjeta");
+  const [solicitudEfectivoOk, setSolicitudEfectivoOk] = useState(false);
   const [licencia, setLicencia] = useState("");
   const [consientoLicencia, setConsientoLicencia] = useState(false);
   const { estado: verifLicencia, iniciar: iniciarVerifLicencia } = useVerificacionAutomatica();
@@ -357,6 +359,11 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
   const servicio = servicioBase - ahorro;
   const total = subtotal + servicio;
   const requiereFianza = !exp && !patronActivo;
+  /* Efectivo (tablón de contactos): solo si el dueño va a bordo — MISMA condición que la fianza,
+     reutilizada, no una copia — Y el anuncio lo acepta. La validación de verdad la hace el
+     servidor (crear-reserva-efectivo); esto solo decide si ofrecerlo, para no contradecirlo. */
+  const puedeEfectivo = !!item.acepta_efectivo && !requiereFianza;
+  const enEfectivo = puedeEfectivo && metodoPago === "efectivo";
   /* Un kayak o una tabla de paddle surf NO necesitan licencia de navegación (la propia
      tarjeta pone "sin licencia"): pedírsela dejaba el material imposible de alquilar. */
   const requiereLicencia = requiereFianza && !mat;
@@ -399,6 +406,24 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
       window.location.href = url;
     } catch (err) {
       setErrorReserva(err.message || "No se ha podido iniciar el pago. Inténtalo de nuevo.");
+      setEnviandoReserva(false);
+    }
+  };
+
+  const reservarEfectivo = async () => {
+    if (!usuario) { onNecesitaCuenta(); return; }
+    if (fechaInvalida || avisoInvalido) return;
+    setEnviandoReserva(true); setErrorReserva("");
+    try {
+      await crearReservaEfectivo({
+        anuncioId: item.id, modo, horas, dias, personas,
+        conPatron: !exp && !mat && item.patron === "opcional" && conPatron,
+        inicioISO, detalle: resumenTxt,   // el finISO lo calcula el servidor
+      });
+      setSolicitudEfectivoOk(true);
+    } catch (err) {
+      setErrorReserva(err.message || "No se ha podido enviar la solicitud.");
+    } finally {
       setEnviandoReserva(false);
     }
   };
@@ -527,14 +552,28 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
                 </>
               )}
 
+              {puedeEfectivo && (
+                <div className="metodo-pago">
+                  <button type="button" className={!enEfectivo ? "on" : ""} onClick={() => setMetodoPago("tarjeta")}><CreditCard size={15} /> Con tarjeta</button>
+                  <button type="button" className={enEfectivo ? "on" : ""} onClick={() => setMetodoPago("efectivo")}><Wallet size={15} /> En efectivo</button>
+                </div>
+              )}
+
               <div className="desglose">
                 <Linea k={exp ? `${eur(item.persona)} × ${personas} pers.` : (modo === "horas" ? `${eur(item.hora)} × ${horas} h` : `${eur(item.dia)} × ${dias} ${dias > 1 ? "días" : "día"}`)} v={eur(baseSinDto)} tachado={dtoUltimaHora > 0} />
                 {dtoUltimaHora > 0 && <Linea k={`Última hora (-${dtoUltimaHora}%)`} v={`-${eur(ahorroUltimaHora)}`} verde />}
                 {patronActivo && <Linea k={`Patrón (${modo === "horas" ? horas + " h" : dias + (dias > 1 ? " días" : " día")})`} v={eur(patronCoste)} />}
-                <Linea k={`Gastos de servicio (${COMISION * 100}%)`} v={eur(servicioBase)} tachado={dtoGestion > 0} />
-                {dtoGestion > 0 && <Linea k={`Descuento de fidelidad (-${dtoGestion * 100}%)`} v={`-${eur(ahorro)}`} verde />}
-                <div className="total"><span>Total</span><span className="precio"><b>{eur(total)}</b></span></div>
+                {!enEfectivo && <Linea k={`Gastos de servicio (${COMISION * 100}%)`} v={eur(servicioBase)} tachado={dtoGestion > 0} />}
+                {!enEfectivo && dtoGestion > 0 && <Linea k={`Descuento de fidelidad (-${dtoGestion * 100}%)`} v={`-${eur(ahorro)}`} verde />}
+                <div className="total"><span>Total{enEfectivo ? " · en persona" : ""}</span><span className="precio"><b>{eur(enEfectivo ? subtotal : total)}</b></span></div>
               </div>
+
+              {enEfectivo && (
+                <div className="efectivo-aviso">
+                  <span className="efectivo-aviso-tit"><AlertTriangle size={16} /> Pago en efectivo, en persona</span>
+                  <p><b>Marea no retiene fianza ni ofrece protección de pago en esta reserva.</b> Solo te ponemos en contacto con el propietario: el dinero se paga en mano el día del alquiler. Envías una solicitud y él tiene que aceptarla; si algo va mal, Marea no puede mediar ni reembolsar.</p>
+                </div>
+              )}
 
               {requiereFianza && (
                 <div className="fianza-box">
@@ -565,8 +604,12 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
               )}
 
               {errorReserva && <p className="auth-error">{errorReserva}</p>}
-              <button className="btn-primario" onClick={reservar} disabled={enviandoReserva || (!!usuario && (fechaInvalida || avisoInvalido || (requiereLicencia && verifLicencia !== "verificado")))}>{!usuario ? "Entra para reservar" : enviandoReserva ? "Redirigiendo a pago…" : exp ? `Reservar ${personas > 1 ? "plazas" : "plaza"}` : mat ? "Alquilar" : "Reservar ahora"}</button>
-              <p className="nota"><Info size={12} /> Pago seguro con tarjeta, PayPal, Apple Pay o Google Pay · Cancela sin recargo hasta 48 h antes</p>
+              {solicitudEfectivoOk ? (
+                <div className="efectivo-ok"><Check size={16} /> Solicitud enviada. El propietario tiene que confirmarla; te avisaremos por correo. La verás en «Mi panel».</div>
+              ) : (
+                <button className="btn-primario" onClick={enEfectivo ? reservarEfectivo : reservar} disabled={enviandoReserva || (!!usuario && (fechaInvalida || avisoInvalido || (!enEfectivo && requiereLicencia && verifLicencia !== "verificado")))}>{!usuario ? "Entra para reservar" : enviandoReserva ? (enEfectivo ? "Enviando solicitud…" : "Redirigiendo a pago…") : enEfectivo ? "Solicitar en efectivo" : exp ? `Reservar ${personas > 1 ? "plazas" : "plaza"}` : mat ? "Alquilar" : "Reservar ahora"}</button>
+              )}
+              <p className="nota"><Info size={12} /> {enEfectivo ? "Envías una solicitud; el propietario la confirma. El pago es en persona." : "Pago seguro con tarjeta, PayPal, Apple Pay o Google Pay · Cancela sin recargo hasta 48 h antes"}</p>
             </>
         </aside>
       </div>
@@ -575,6 +618,15 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
 }
 const Spec = ({ icon: Icon, k, v }) => (<div className="spec"><Icon size={16} className="spec-i" /><div><span className="spec-k">{k}</span><span className="spec-v">{v}</span></div></div>);
 const Linea = ({ k, v, tachado, verde }) => (<div className={`linea ${verde ? "linea-verde" : ""}`}><span>{k}</span><span className={tachado ? "tachado" : ""}>{v}</span></div>);
+/* Badge de estado de una reserva, con sentido para tarjeta Y efectivo (efectivo_pendiente /
+   efectivo_confirmada, que la UI antes no conocía). */
+function BadgeEstado({ r }) {
+  if (r.estado === "finalizada") return <span className="estado confirmada">Finalizada</span>;
+  if (r.estado === "cancelada") return <span className="estado revision">Cancelada</span>;
+  if (r.estado === "efectivo_pendiente") return <span className="estado efvo-pend"><Wallet size={12} /> Solicitud en efectivo</span>;
+  if (r.estado === "efectivo_confirmada") return <span className="estado efvo-conf"><Wallet size={12} /> Confirmada · efectivo</span>;
+  return <span className="estado confirmada">Confirmada</span>;
+}
 
 /* ── Modal cuenta ────────────────────────────────────────────────── */
 const ERRORES_AUTH = {
@@ -1156,7 +1208,7 @@ function estadoFidelidad(count) {
 }
 
 /* ── Panel de usuario ────────────────────────────────────────────── */
-function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, cobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onReclamarFianza, recompensas, onReclamarRecompensa, mensajes, onAbrirChat, onCancelarRecibida, onActivarUltimaHora, onDesactivarUltimaHora, onEditarAnuncio, onEliminarAnuncio }) {
+function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropietario, favoritos, esAdmin, anunciosRevision, onAprobarAnuncio, onRechazarAnuncio, onVerDocumento, onConectarStripe, errorCobros, cobros, onExplorar, onPublicar, onAbrir, onSalir, onVentajas, onMantenimiento, onCancelar, onFinalizar, onFinalizarRecibida, onReclamarFianza, recompensas, onReclamarRecompensa, mensajes, onAbrirChat, onCancelarRecibida, onConfirmarEfectivo, onRechazarEfectivo, avisoFranja, onActivarUltimaHora, onDesactivarUltimaHora, onEditarAnuncio, onEliminarAnuncio }) {
   const esCliente = usuario.rol === "cliente" || usuario.rol === "ambas";
   const esProp = usuario.rol === "propietario" || usuario.rol === "ambas";
   const activas = reservas.filter((r) => r.estado !== "finalizada").slice().sort((a, b) => new Date(a.inicioISO) - new Date(b.inicioISO));
@@ -1202,10 +1254,10 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
         {esCliente && (
           <section className="panel-sec">
             <h2 className="serif sec-t"><CalendarCheck size={18} /> Próxima reserva</h2>
-            {proxima ? (<div className="prox"><div><span className="estado confirmada">Confirmada</span><p className="prox-nombre">{proxima.barco}</p><p className="prox-sub">{proxima.puerto} · {proxima.detalle}</p></div><div className="prox-fin"><span className="precio"><b>{eur(proxima.total)}</b></span>
-              {new Date() > new Date(proxima.finISO)
+            {proxima ? (<div className="prox"><div><BadgeEstado r={proxima} /><p className="prox-nombre">{proxima.barco}</p><p className="prox-sub">{proxima.puerto} · {proxima.detalle}</p></div><div className="prox-fin"><span className="precio"><b>{eur(proxima.total)}</b></span>
+              {new Date() > new Date(proxima.finISO) && (proxima.estado === "confirmada" || proxima.estado === "efectivo_confirmada")
                 ? <div className="li-acciones"><BotonChat reserva={proxima} mensajes={mensajes} miId={usuario.id} onAbrir={onAbrirChat} /><button className="btn-sec sm" onClick={() => onFinalizar(proxima)}>Marcar como finalizada</button></div>
-                : <div className="li-acciones"><BotonChat reserva={proxima} mensajes={mensajes} miId={usuario.id} onAbrir={onAbrirChat} /><button className="btn-cancelar sm" onClick={() => onCancelar(proxima)}>Cancelar</button></div>}
+                : <div className="li-acciones"><BotonChat reserva={proxima} mensajes={mensajes} miId={usuario.id} onAbrir={onAbrirChat} /><button className="btn-cancelar sm" onClick={() => onCancelar(proxima)}>{proxima.estado === "efectivo_pendiente" ? "Cancelar solicitud" : "Cancelar"}</button></div>}
             </div></div>)
               : <Vacio txt="No tienes reservas activas." cta="Explorar" onCta={onExplorar} />}
             {proxima && proxima.fianzaEstado && <FianzaEstado reserva={proxima} />}
@@ -1223,8 +1275,10 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
                     <div className="li-acciones">
                       <BotonChat reserva={r} mensajes={mensajes} miId={usuario.id} onAbrir={onAbrirChat} />
                       {r.estado === "finalizada" ? <span className="estado confirmada">Finalizada</span>
-                        : yaTermino ? <button className="btn-sec sm" onClick={() => onFinalizar(r)}>Marcar finalizada</button>
-                          : <button className="btn-cancelar sm" onClick={() => onCancelar(r)}>Cancelar</button>}
+                        : <><BadgeEstado r={r} />
+                          {yaTermino && (r.estado === "confirmada" || r.estado === "efectivo_confirmada")
+                            ? <button className="btn-sec sm" onClick={() => onFinalizar(r)}>Marcar finalizada</button>
+                            : <button className="btn-cancelar sm" onClick={() => onCancelar(r)}>{r.estado === "efectivo_pendiente" ? "Cancelar solicitud" : "Cancelar"}</button>}</>}
                     </div>
                   </div>
                   {r.fianzaEstado && <FianzaEstado reserva={r} compacta />}
@@ -1343,6 +1397,7 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
         {esProp && reservasRecibidas.length > 0 && (
           <section className="panel-sec"><h2 className="serif sec-t"><ClipboardList size={18} /> Reservas recibidas</h2>
             <p className="mini-nota">Cuando termine el alquiler, dale el visto bueno para cerrarlo. Si te lo devuelven dañado o no te lo devuelven, pulsa «Hubo daños» y le cobraremos la fianza a la tarjeta del cliente.</p>
+            {avisoFranja && <p className="mini-nota mini-nota-error">{avisoFranja}</p>}
             <ul className="lista">{reservasRecibidas.map((r) => {
               const yaTermino = new Date() > new Date(r.finISO);
               return (
@@ -1352,6 +1407,17 @@ function Panel({ usuario, reservas, misBarcos, reservasRecibidas, avisosPropieta
                     <div className="li-acciones">
                       <BotonChat reserva={r} mensajes={mensajes} miId={usuario.id} onAbrir={onAbrirChat} />
                       {r.estado === "finalizada" ? <span className="estado confirmada">Finalizada</span>
+                        : r.estado === "cancelada" ? <span className="estado revision">Cancelada</span>
+                        : r.estado === "efectivo_pendiente" ? (
+                          <><span className="estado efvo-pend"><Wallet size={12} /> Efectivo</span>
+                            <button className="btn-sec sm" onClick={() => onConfirmarEfectivo(r.id)}>Confirmar</button>
+                            <button className="btn-cancelar sm" onClick={() => onRechazarEfectivo(r.id)}>Rechazar</button></>
+                        )
+                        : r.estado === "efectivo_confirmada" ? (
+                          yaTermino
+                            ? <><span className="estado efvo-conf"><Wallet size={12} /> Efectivo</span><button className="btn-sec sm" onClick={() => onFinalizarRecibida(r.id)}>Dar por finalizada</button></>
+                            : <><span className="estado efvo-conf"><Wallet size={12} /> Confirmada · efectivo</span><button className="btn-cancelar sm" onClick={() => onCancelarRecibida(r)}>Cancelar</button></>
+                        )
                         : yaTermino ? (
                           <>
                             {r.fianzaEstado && r.fianzaEstado !== "liberada" && r.fianzaEstado !== "cobrada" && (
@@ -1840,6 +1906,7 @@ function Publicar({ usuario, anuncio, onDone, onPublicado }) {
   const [potencia, setPotencia] = useState(anuncio?.potencia ?? "");
   const [lista, setLista] = useState(anuncio?.lista || "7ª");
   const [patron, setPatron] = useState(anuncio?.patron || "opcional");
+  const [aceptaEfectivo, setAceptaEfectivo] = useState(anuncio?.acepta_efectivo || false);
   const [horaPrecio, setHoraPrecio] = useState(anuncio?.hora ?? "");
   const [precio, setPrecio] = useState(anuncio ? (anuncio.clase === "experiencia" ? anuncio.persona : anuncio.dia) || 0 : 350);
   const [descripcion, setDescripcion] = useState(anuncio?.descripcion || "");
@@ -1947,12 +2014,16 @@ function Publicar({ usuario, anuncio, onDone, onPublicado }) {
         const todasLasFotos = [...fotosExistentes, ...urlsNuevas];
         const todosLosDocs = esMat ? [] : [...documentosExistentes, ...rutasNuevas];
 
+        /* Efectivo solo donde el dueño va a bordo: experiencia o barco con patrón. Nunca material
+           ni barco sin patrón (lo exige el CHECK de la BD; aquí ni lo ofrecemos). */
+        const puedeEfvoAnuncio = esExp || (!esMat && (patron === "incluido" || patron === "opcional"));
         const base = {
           clase, propietario_id: usuario.id,
           nombre: nombre.trim() || (esExp ? "Tu experiencia" : esMat ? "Tu material" : "Tu barco"),
           puerto: puerto.trim(), zona: zonaPub, descripcion: descripcion.trim(), fotos: todasLasFotos,
           aviso_minimo_horas: +avisoHoras > 0 ? +avisoHoras : null,
           equipamiento: [...equipoSel, ...equipoCustom],
+          acepta_efectivo: puedeEfvoAnuncio && aceptaEfectivo,
         };
         const conSeguro = { poliza: poliza.trim(), caducidad_seguro: caducidadSeguro, documentos: todosLosDocs };
         const propio = esExp
@@ -2143,6 +2214,12 @@ function Publicar({ usuario, anuncio, onDone, onPublicado }) {
             </>
           )}
 
+          {(esExp || (!esMat && patron !== "no")) && (
+            <label className="efvo-check">
+              <input type="checkbox" checked={aceptaEfectivo} onChange={(e) => setAceptaEfectivo(e.target.checked)} />
+              <span><b>Aceptar también pago en efectivo</b>, en persona. Como vas a bordo (con patrón o experiencia) no hace falta fianza. Marea no cobra comisión ni ofrece protección en esas reservas: solo os pone en contacto, y tú confirmas cada solicitud.</span>
+            </label>
+          )}
           {errorPublicar && <p className="auth-error">{errorPublicar}</p>}
           <button className="btn-primario ancho" onClick={publicar} disabled={faltaDocumentacion || verificacion === "verificando" || enviando}>
             {verificacion === "verificando" || enviando ? "Guardando…" : editando ? "Guardar cambios" : "Publicar"}
@@ -2210,6 +2287,7 @@ export default function App() {
   const [recompensas, setRecompensas] = useState([]);                      // las mías, de "Cuida tu Barco"
   const [recompensasPendientes, setRecompensasPendientes] = useState([]);  // las que el admin debe servir
   const [cancelandoProp, setCancelandoProp] = useState(null);
+  const [avisoFranja, setAvisoFranja] = useState("");
   const [reclamandoFianza, setReclamandoFianza] = useState(null);
   const [editandoAnuncio, setEditandoAnuncio] = useState(null);
   const [rechazandoAnuncio, setRechazandoAnuncio] = useState(null);
@@ -2476,6 +2554,29 @@ export default function App() {
       return p.map((x) => (x.id === id ? { ...x, estado: "finalizada", fianzaEstado } : x));
     });
   };
+  /* El propietario confirma una solicitud en efectivo (efectivo_pendiente → efectivo_confirmada).
+     Si dos solicitudes solapaban y ya confirmó otra, R8 hace que esta choque: se detecta el
+     mensaje limpio de la BD, se RECHAZA la solicitud perdedora y se avisa (nada de error crudo). */
+  const confirmarReservaEfectivo = async (id) => {
+    setAvisoFranja("");
+    try {
+      await actualizarReserva(id, { estado: "efectivo_confirmada" });
+      setReservasRecibidas((p) => p.map((r) => (r.id === id ? { ...r, estado: "efectivo_confirmada" } : r)));
+    } catch (err) {
+      const ocupada = /ocupada|exclusion|conflicting|reservas_sin_solape/i.test(String(err?.message || err));
+      if (ocupada) {
+        await actualizarReserva(id, { estado: "cancelada", motivo_cancelacion: "Esa franja ya estaba ocupada." }).catch(console.error);
+        setReservasRecibidas((p) => p.map((r) => (r.id === id ? { ...r, estado: "cancelada" } : r)));
+        setAvisoFranja("Esa franja ya estaba ocupada, así que esa solicitud se ha rechazado.");
+      } else {
+        console.error(err);
+      }
+    }
+  };
+  const rechazarReservaEfectivo = async (id) => {
+    await actualizarReserva(id, { estado: "cancelada", motivo_cancelacion: "El propietario no ha aceptado la reserva en efectivo." }).catch(console.error);
+    setReservasRecibidas((p) => p.map((r) => (r.id === id ? { ...r, estado: "cancelada" } : r)));
+  };
   const confirmarReclamarFianza = async (reservaId, motivo) => {
     await cobrarFianza(reservaId, motivo);
     setReservasRecibidas((p) => p.map((r) => (r.id === reservaId ? { ...r, fianzaEstado: "cobrada" } : r)));
@@ -2678,7 +2779,7 @@ export default function App() {
           onSalir={cerrarSesion}
         />
       )}
-      {vista === "panel" && usuario && !esAdmin && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={setRechazandoAnuncio} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} cobros={cobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} recompensas={recompensas} onReclamarRecompensa={(barco, nivel) => setReclamandoRecompensa({ barco, nivel })} mensajes={mensajes} onAbrirChat={abrirChat} onCancelarRecibida={setCancelandoProp} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEditarAnuncio={(b) => { setEditandoAnuncio(b); ir("editar"); }} onEliminarAnuncio={setEliminandoAnuncio} />)}
+      {vista === "panel" && usuario && !esAdmin && (<Panel usuario={usuario} reservas={reservas} misBarcos={misBarcos} reservasRecibidas={reservasRecibidas} avisosPropietario={avisosPropietario} favoritos={favoritos} esAdmin={esAdmin} anunciosRevision={anunciosRevision} onAprobarAnuncio={(a) => revisarAnuncio(a, "Publicado")} onRechazarAnuncio={setRechazandoAnuncio} onVerDocumento={verDocumento} onConectarStripe={conectarStripe} errorCobros={errorCobros} cobros={cobros} onExplorar={() => { setClaseReset("todo"); ir("explorar"); }} onPublicar={irPublicar} onAbrir={abrir} onSalir={cerrarSesion} onVentajas={() => ir("ventajas")} onMantenimiento={() => ir("mantenimiento")} onCancelar={setCancelando} onFinalizar={setResenando} onFinalizarRecibida={finalizarReservaRecibida} onReclamarFianza={setReclamandoFianza} recompensas={recompensas} onReclamarRecompensa={(barco, nivel) => setReclamandoRecompensa({ barco, nivel })} mensajes={mensajes} onAbrirChat={abrirChat} onCancelarRecibida={setCancelandoProp} onConfirmarEfectivo={confirmarReservaEfectivo} onRechazarEfectivo={rechazarReservaEfectivo} avisoFranja={avisoFranja} onActivarUltimaHora={activarUltimaHora} onDesactivarUltimaHora={desactivarUltimaHora} onEditarAnuncio={(b) => { setEditandoAnuncio(b); ir("editar"); }} onEliminarAnuncio={setEliminandoAnuncio} />)}
 
       {auth && <AuthModal tab={auth.tab} rolPre={auth.rolPre} onClose={() => setAuth(null)} onCambiarTab={(t) => setAuth((a) => ({ ...a, tab: t }))} onAuth={completarAuth} />}
       {cancelando && <CancelarModal reserva={cancelando} onClose={() => setCancelando(null)} onConfirmar={confirmarCancelacion} />}
@@ -3036,6 +3137,17 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .prox{display:flex;justify-content:space-between;align-items:center;gap:16px;background:var(--arena);border-radius:14px;padding:18px;flex-wrap:wrap}
 .estado{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:4px 9px;border-radius:6px}
 .estado.confirmada{background:rgba(127,179,154,.2);color:#3B7A5E}.estado.revision{background:rgba(230,193,95,.2);color:#977415}
+.estado.efvo-pend{background:rgba(230,193,95,.22);color:#977415;display:inline-flex;align-items:center;gap:4px}
+.estado.efvo-conf{background:rgba(62,124,166,.16);color:var(--mar);display:inline-flex;align-items:center;gap:4px}
+.metodo-pago{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.metodo-pago button{display:flex;align-items:center;justify-content:center;gap:6px;padding:11px;border:1px solid var(--linea);background:var(--blanco);border-radius:11px;font-size:13.5px;font-weight:600;color:var(--slate);cursor:pointer}
+.metodo-pago button.on{border-color:var(--mar);background:rgba(62,124,166,.08);color:var(--noche)}
+.efectivo-aviso{background:rgba(214,112,106,.09);border:1px solid var(--coral);border-radius:12px;padding:13px 15px;margin-bottom:16px}
+.efectivo-aviso-tit{display:flex;align-items:center;gap:7px;font-weight:700;font-size:13.5px;color:#B0453E;margin-bottom:5px}
+.efectivo-aviso p{font-size:13px;color:var(--slate);line-height:1.5}
+.efectivo-ok{display:flex;align-items:flex-start;gap:8px;background:rgba(127,179,154,.14);border:1px solid var(--sage);border-radius:12px;padding:13px 15px;font-size:13.5px;color:#3B7A5E;font-weight:500;line-height:1.45}
+.efvo-check{display:flex;align-items:flex-start;gap:10px;padding:13px;border:1px solid var(--linea);border-radius:12px;margin-bottom:14px;cursor:pointer;font-size:13px;color:var(--slate);line-height:1.45}
+.efvo-check input{margin-top:2px;flex-shrink:0}
 .prox-nombre{font-weight:700;color:var(--tinta);margin-top:8px}.prox-sub{font-size:13px;color:var(--muted);margin-top:2px}
 .prox-fin{text-align:right;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
 .lista{list-style:none;display:flex;flex-direction:column;gap:10px}

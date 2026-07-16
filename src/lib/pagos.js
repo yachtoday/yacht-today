@@ -11,6 +11,17 @@ export async function iniciarPago(payload) {
   return data.url;
 }
 
+/* Modo EFECTIVO (tablón de contactos): NO hay pago por la plataforma. Solo crea la SOLICITUD de
+   reserva (queda pendiente de que el propietario la confirme). Toda la validación —que el dueño
+   vaya a bordo, importes, antelación— la hace el servidor (crear-reserva-efectivo); aquí solo se
+   envía. El finISO lo calcula el servidor, no se manda. */
+export async function crearReservaEfectivo(payload) {
+  const { data, error } = await supabase.functions.invoke("crear-reserva-efectivo", { body: payload });
+  if (error) throw error;
+  if (!data?.ok) throw new Error(data?.error || "No se ha podido enviar la solicitud de reserva.");
+  return data.reservaId;
+}
+
 // Crea (o retoma) la cuenta Stripe Express del propietario y devuelve la URL
 // de alta a la que hay que redirigirlo para que complete sus datos de cobro.
 export async function conectarCobros() {

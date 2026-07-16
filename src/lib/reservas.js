@@ -7,7 +7,7 @@ function filaAReserva(row) {
     cliente: row.cliente_nombre, detalle: row.detalle, subtotal: row.subtotal, servicio: row.servicio,
     total: row.total, fianza: row.fianza, fianzaEstado: row.fianza_estado,
     licenciaVerificada: row.licencia_verificada, inicioISO: row.inicio_iso, finISO: row.fin_iso,
-    estado: row.estado, motivoCancelacion: row.motivo_cancelacion,
+    estado: row.estado, metodoPago: row.metodo_pago, motivoCancelacion: row.motivo_cancelacion,
     resena: row.resena_estrellas ? { estrellas: row.resena_estrellas, comentario: row.resena_comentario } : null,
   };
 }

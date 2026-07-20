@@ -8,7 +8,7 @@ import { iniciarPago, crearReservaEfectivo, conectarCobros, cobrarFianza, estado
 import { listarMisRecompensas, reclamarRecompensa, listarRecompensasPendientes, marcarRecompensaEnviada } from "./lib/recompensas";
 import { listarMisMensajes, listarMensajes, enviarMensaje, marcarLeidos } from "./lib/mensajes";
 import {
-  Anchor, Search, MapPin, Users, Star, Ship, Waves, ChevronRight, Check,
+  Anchor, Search, MapPin, Users, Star, Ship, Waves, ChevronRight, ChevronLeft, Check,
   Plus, ArrowLeft, Ruler, Gauge, ShieldCheck, Menu, X, Sailboat, Info,
   User, Mail, Phone, Lock, BadgeCheck, LogOut, Heart, Share2, Minus,
   CalendarCheck, ClipboardList, Sparkles, Fish, Wind, Gift, Trophy,
@@ -247,6 +247,69 @@ function Foto({ item, alto = 200, tag = true, entera = false }) {
     </div>
   );
 }
+/* Carrusel de fotos de la ficha: la foto grande pasa por TODAS las del anuncio con flechas,
+   teclado (←/→) y swipe en móvil, más puntitos y contador de posición ("2/5"). Antes solo se veía
+   la primera en grande y el resto como miniaturas que no se abrían. Solo cambia la VISUALIZACIÓN de
+   las fotos: nada de la reserva. Con una sola foto no salen flechas ni puntitos; sin fotos, cae al
+   dibujo genérico de `Foto`. Reutiliza `.foto`/`.foto-fondo`/`.foto-img.entera` para verse igual
+   que antes (foto entera sobre fondo desenfocado). */
+function GaleriaFicha({ item, alto = 440 }) {
+  const fotos = item.fotos || [];
+  const total = fotos.length;
+  const [i, setI] = useState(0);
+  const tocarX = useRef(null);
+
+  // Al abrir otro anuncio, empezar por su primera foto.
+  useEffect(() => { setI(0); }, [item.id]);
+
+  // Teclado: ←/→ pasan de foto. Se ignora si el foco está en un campo (para no pisar la escritura).
+  useEffect(() => {
+    if (total <= 1) return;
+    const onKey = (e) => {
+      const t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (e.key === "ArrowLeft") setI((p) => (p - 1 + total) % total);
+      else if (e.key === "ArrowRight") setI((p) => (p + 1) % total);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [total]);
+
+  if (total === 0) return <Foto item={item} alto={alto} tag={false} entera />;
+
+  const ir = (d) => setI((p) => (p + d + total) % total);
+  const foto = fotos[i];
+
+  return (
+    <div
+      className="galeria-car"
+      onTouchStart={(e) => { tocarX.current = e.touches[0].clientX; }}
+      onTouchEnd={(e) => {
+        if (tocarX.current == null) return;
+        const dx = e.changedTouches[0].clientX - tocarX.current;
+        tocarX.current = null;
+        if (Math.abs(dx) > 40) ir(dx < 0 ? 1 : -1);
+      }}
+    >
+      <div className="foto" style={{ height: alto, background: "var(--noche2)" }}>
+        <div className="foto-fondo" style={{ backgroundImage: `url(${foto})` }} />
+        <img className="foto-img entera" src={foto} alt={`${item.nombre} — foto ${i + 1} de ${total}`} />
+      </div>
+      {total > 1 && (
+        <>
+          <button type="button" className="car-flecha izq" aria-label="Foto anterior" onClick={() => ir(-1)}><ChevronLeft size={22} /></button>
+          <button type="button" className="car-flecha der" aria-label="Foto siguiente" onClick={() => ir(1)}><ChevronRight size={22} /></button>
+          <span className="car-contador">{i + 1}/{total}</span>
+          <div className="car-puntos">
+            {fotos.map((_, k) => (
+              <button type="button" key={k} className={`car-punto${k === i ? " on" : ""}`} aria-label={`Ir a la foto ${k + 1}`} aria-current={k === i} onClick={() => setI(k)} />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 const Chip = ({ icon: Icon, children }) => (<span className="chip"><Icon size={13} strokeWidth={2} /> {children}</span>);
 
 /* El botón "Compartir" no hacía nada: no tenía onClick, y aunque lo hubiera tenido no había
@@ -461,17 +524,9 @@ function Ficha({ item, onBack, usuario, numReservas, esFavorito, onToggleFav, on
 
       <div className="ficha-grid">
         <div>
-          <Foto item={item} alto={440} tag={false} entera />
-          {/* Solo fotos de verdad. Antes se pintaban siempre 4 huecos con etiquetas
-              inventadas ("Camarote", "Detalle"…) y, si no había foto, salía un rectángulo
-              azul con el texto encima: parecía que la web estaba rota. */}
-          {item.fotos?.length > 1 && (
-            <div className="galeria">
-              {item.fotos.slice(1, 5).map((foto, i) => (
-                <div key={foto} className="mini"><img className="foto-img" src={foto} alt={`${item.nombre} — foto ${i + 2}`} loading="lazy" /></div>
-              ))}
-            </div>
-          )}
+          {/* Carrusel: la foto grande pasa por TODAS las del anuncio (flechas, teclado ←/→, swipe).
+              Antes solo se veía la primera en grande y el resto como miniaturas que no se abrían. */}
+          <GaleriaFicha item={item} alto={440} />
           <div className="specs">{specs.map(([Ic, k, v]) => <Spec key={k} icon={Ic} k={k} v={v} />)}</div>
           <h2 className="serif bloque-tit">{tituloSobre}</h2>
           <p className="bloque-txt">{item.desc}</p>
@@ -3009,6 +3064,15 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .ficha .foto{border-radius:20px}
 .galeria{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-top:9px}
 .mini{position:relative;height:78px;border-radius:12px;overflow:hidden}.mini span{position:absolute;left:8px;bottom:6px;font-size:10px;color:var(--arena)}
+/* Carrusel de la ficha */
+.galeria-car{position:relative;touch-action:pan-y}
+.car-flecha{position:absolute;top:50%;transform:translateY(-50%);display:grid;place-items:center;width:40px;height:40px;border-radius:50%;background:rgba(15,39,50,.55);color:var(--arena);backdrop-filter:blur(4px);transition:background .16s}
+.car-flecha:hover{background:var(--noche)}
+.car-flecha.izq{left:12px}.car-flecha.der{right:12px}
+.car-contador{position:absolute;top:12px;right:12px;background:rgba(15,39,50,.6);color:var(--arena);font-family:'Hanken Grotesk',sans-serif;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;backdrop-filter:blur(4px)}
+.car-puntos{position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;gap:7px}
+.car-punto{width:8px;height:8px;border-radius:50%;background:rgba(245,239,228,.5);box-shadow:0 1px 3px rgba(0,0,0,.35);transition:background .16s,transform .16s}
+.car-punto.on{background:var(--arena);transform:scale(1.25)}
 .specs{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:26px 0;padding:20px;background:var(--blanco);border:1px solid var(--linea);border-radius:16px}
 .spec{display:flex;align-items:center;gap:10px}.spec-i{color:var(--mar)}
 .spec div{display:flex;flex-direction:column}

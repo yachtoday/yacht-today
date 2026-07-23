@@ -170,4 +170,14 @@ create trigger trg_notificar_cancelacion
   after update on public.reservas
   for each row execute function public.trg_notificar_cancelacion();
 
+-- Higiene (advisor de Supabase): son funciones de trigger, PostgREST ya las bloquea como RPC
+-- (devuelven tipo `trigger`, 404 confirmado) — pero el GRANT de EXECUTE por defecto a anon/
+-- authenticated seguía ahí. Revocarlo no afecta a los triggers: se disparan con el permiso del
+-- dueño de la función, no por el grant de EXECUTE de estos roles.
+revoke all on function public.trg_notificar_anuncio_insert() from public, anon, authenticated;
+revoke all on function public.trg_notificar_anuncio_update() from public, anon, authenticated;
+revoke all on function public.trg_notificar_recompensa_insert() from public, anon, authenticated;
+revoke all on function public.trg_notificar_recompensa_update() from public, anon, authenticated;
+revoke all on function public.trg_notificar_cancelacion() from public, anon, authenticated;
+
 commit;

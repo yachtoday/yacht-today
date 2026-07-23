@@ -16,7 +16,6 @@ export async function listarMisRecompensas(propietarioId) {
 export async function reclamarRecompensa(payload) {
   const { data, error } = await supabase.from("recompensas").insert(payload).select().single();
   if (error) throw error;
-  await notificarRecompensa("solicitada", data.id);
   return data;
 }
 
@@ -31,21 +30,14 @@ export async function listarRecompensasPendientes() {
   return data;
 }
 
+/* R16 (SEC-009) · el aviso al reclamar ("solicitada") y al marcar enviada ya no los dispara el
+   navegador: los dispara un trigger de la base de datos con la service_role key
+   (supabase/migrations/20260724_r16_sec009_notificar_backend.sql), porque notificar-recompensa
+   ahora exige ese candado exacto. */
 export async function marcarRecompensaEnviada(id, notaAdmin = null) {
   const { error } = await supabase
     .from("recompensas")
     .update({ estado: "enviada", enviada_at: new Date().toISOString(), nota_admin: notaAdmin || null })
     .eq("id", id);
   if (error) throw error;
-  await notificarRecompensa("enviada", id);
-}
-
-/* Que falle el correo no debe tumbar la operación: la recompensa ya está guardada, y lo peor
-   que pasa es que alguien se entere más tarde (mismo criterio que en notificarAnuncio). */
-async function notificarRecompensa(tipo, recompensaId) {
-  try {
-    await supabase.functions.invoke("notificar-recompensa", { body: { tipo, recompensaId } });
-  } catch (err) {
-    console.error("No se ha podido enviar el aviso de la recompensa:", err);
-  }
 }

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabaseClient";
-import { listarAnunciosPublicados, listarMisAnuncios, crearAnuncio, actualizarAnuncio, borrarArchivosDeAnuncio, notificarAnuncio, subirFotos, subirDocumentos, urlFirmadaDocumento, eliminarAnuncio, listarAnunciosEnRevision, cambiarEstadoAnuncio } from "./lib/anuncios";
-import { listarMisReservas, listarReservasRecibidas, actualizarReserva, notificarCancelacion } from "./lib/reservas";
+import { listarAnunciosPublicados, listarMisAnuncios, crearAnuncio, actualizarAnuncio, borrarArchivosDeAnuncio, subirFotos, subirDocumentos, urlFirmadaDocumento, eliminarAnuncio, listarAnunciosEnRevision, cambiarEstadoAnuncio } from "./lib/anuncios";
+import { listarMisReservas, listarReservasRecibidas, actualizarReserva } from "./lib/reservas";
 import { Legal } from "./Legal";
 import { listarFavoritos, anadirFavorito, quitarFavorito } from "./lib/favoritos";
 import { iniciarPago, crearReservaEfectivo, conectarCobros, cobrarFianza, estadoCobros } from "./lib/pagos";
@@ -2105,8 +2105,7 @@ function Publicar({ usuario, anuncio, onDone, onPublicado }) {
         } else {
           guardado = await crearAnuncio({ ...propio, estado: "En revisión" });
         }
-        // Avisa al admin de que tiene algo que revisar. Antes no se enteraba nadie.
-        if (!editando || vuelveARevision) await notificarAnuncio("nuevo", guardado.id);
+        // El aviso al admin (SEC-009) lo dispara ahora un trigger de la BD al ver 'En revisión'.
         onPublicado(guardado);
         setEnviado(true);
       } catch (err) {
@@ -2595,9 +2594,8 @@ export default function App() {
   };
   const confirmarCancelacion = () => {
     const id = cancelando.id;
-    actualizarReserva(id, { estado: "cancelada" })
-      .then(() => notificarCancelacion(id, "cliente"))
-      .catch(console.error);
+    // El aviso al propietario (SEC-009) lo dispara ahora un trigger de la BD al ver 'cancelada'.
+    actualizarReserva(id, { estado: "cancelada" }).catch(console.error);
     setReservas((p) => p.filter((r) => r.id !== id));
     setCancelando(null);
   };
@@ -2648,10 +2646,9 @@ export default function App() {
   const confirmarCancelacionPropietario = (justificado, motivo = null) => {
     const id = cancelandoProp.id;
     /* Al cliente le acaban de tirar los planes: se le avisa por correo, con el motivo si lo
-       hay. Antes no se enteraba, y podía plantarse en el puerto. */
-    actualizarReserva(id, { estado: "cancelada", motivo_cancelacion: motivo })
-      .then(() => notificarCancelacion(id, "propietario", motivo))
-      .catch(console.error);
+       hay. Antes no se enteraba, y podía plantarse en el puerto. El aviso (SEC-009) lo dispara
+       ahora un trigger de la BD al ver 'cancelada', leyendo motivo_cancelacion de la propia fila. */
+    actualizarReserva(id, { estado: "cancelada", motivo_cancelacion: motivo }).catch(console.error);
     setReservasRecibidas((p) => p.filter((r) => r.id !== id));
     if (!justificado) setAvisosPropietario((p) => p + 1);
     setCancelandoProp(null);

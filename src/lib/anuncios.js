@@ -148,23 +148,15 @@ export async function listarAnunciosEnRevision() {
   return data.map(filaAItem);
 }
 
+/* R16 (SEC-009) · el aviso por correo de revisión (al admin cuando hay algo que revisar, al
+   propietario cuando se le aprueba/rechaza) ya NO lo dispara el navegador: lo dispara un trigger
+   de la base de datos (supabase/migrations/20260724_r16_sec009_notificar_backend.sql) con la
+   service_role key, porque notificar-anuncio ahora exige ese candado exacto y un JWT de usuario
+   ya no cuela (antes cualquiera podía invocar la función con datos inventados). */
 export async function cambiarEstadoAnuncio(id, estado, motivoRechazo = null) {
   const cambios = { estado, motivo_rechazo: estado === "Rechazado" ? motivoRechazo : null };
   const { error } = await supabase.from("anuncios").update(cambios).eq("id", id);
   if (error) throw error;
-  await notificarAnuncio(estado === "Publicado" ? "aprobado" : "rechazado", id);
-}
-
-/* Avisa por correo del proceso de revisión: al admin cuando hay algo que revisar, y al
-   propietario cuando se le aprueba o se le rechaza (con el motivo). Que falle el correo no
-   debe tumbar la operación: el anuncio ya está guardado, lo peor que pasa es que alguien se
-   entere más tarde. */
-export async function notificarAnuncio(tipo, anuncioId) {
-  try {
-    await supabase.functions.invoke("notificar-anuncio", { body: { tipo, anuncioId } });
-  } catch (err) {
-    console.error("No se ha podido enviar el aviso del anuncio:", err);
-  }
 }
 
 // Sube varias fotos a Storage, bajo la carpeta del propio usuario, y devuelve sus URLs públicas.

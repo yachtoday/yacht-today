@@ -1,18 +1,49 @@
 import { supabase } from "./supabaseClient";
 
-// Convierte una fila de la tabla `anuncios` a la forma que usa el resto de la app.
+/* SEC-010 · La documentación sensible (matrícula, póliza, caducidad del seguro) ya NO vive en
+   `anuncios` (la leía cualquiera con la anon key): está en `anuncios_documentacion`, con RLS de
+   dueño+admin. Y `documentos` sigue en `anuncios` (lo necesita el guardia SEC-008) pero está
+   revocado al rol anon. Por eso:
+   - la lista PÚBLICA pide columnas EXPLÍCITAS (sin `documentos`); `select("*")` como anon daría 401.
+   - al guardar, la matrícula/póliza/caducidad se separan del payload y van a la tabla hermana.
+   - al leer lo mío / la cola del admin, se re-mezclan para que el resto de la app siga usando
+     item.matricula sin cambios. */
+const COLUMNAS_PUBLICAS = "id,clase,propietario_id,nombre,tipo,actividad,puerto,zona,plazas,eslora,potencia,anio,lista,patron,duracion,anfitrion,persona,hora,dia,estado,hue,rating,reviews,descripcion,created_at,fotos,equipamiento,aviso_minimo_horas,fianza,ultima_hora_descuento,motivo_rechazo,acepta_efectivo";
+// OJO: esta lista debe ir EN SINTONÍA con el GRANT de columnas de R15. Si se añade una columna
+// pública a `anuncios`, hay que añadirla aquí Y al grant; si no, la ficha pública no la vería.
+
+const CAMPOS_DOC = ["matricula", "poliza", "caducidad_seguro"];
+function separarDoc(payload) {
+  const anuncio = { ...payload };
+  const doc = {};
+  for (const k of CAMPOS_DOC) {
+    if (k in anuncio) { doc[k] = anuncio[k] === "" ? null : anuncio[k]; delete anuncio[k]; }
+  }
+  return { anuncio, doc };
+}
+const tieneDoc = (doc) => Object.values(doc).some((v) => v != null && v !== "");
+
+// Convierte una fila de `anuncios` a la forma que usa la app, re-mezclando la documentación embebida.
 export function filaAItem(row) {
+  const emb = row.anuncios_documentacion;
+  const doc = Array.isArray(emb) ? emb[0] : emb;
+  const { anuncios_documentacion, ...resto } = row;
   return {
-    ...row,
+    ...resto,
+    matricula: doc?.matricula ?? null,
+    poliza: doc?.poliza ?? null,
+    caducidad_seguro: doc?.caducidad_seguro ?? null,
     desc: row.descripcion,
     unidad: row.clase === "experiencia" ? "persona" : "día",
   };
 }
 
 export async function listarAnunciosPublicados() {
+  // Columnas explícitas: `documentos` está revocado a anon y matrícula/póliza/caducidad ya no existen
+  // aquí. La ficha pública no necesita nada de eso.
   const { data, error } = await supabase
     .from("anuncios")
-    .select("*")
+    .select(COLUMNAS_PUBLICAS)
     .eq("estado", "Publicado")
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -20,9 +51,10 @@ export async function listarAnunciosPublicados() {
 }
 
 export async function listarMisAnuncios(propietarioId) {
+  // El dueño (authenticated) sí puede leer su documentación por RLS: la embebemos.
   const { data, error } = await supabase
     .from("anuncios")
-    .select("*")
+    .select("*, anuncios_documentacion(matricula, poliza, caducidad_seguro)")
     .eq("propietario_id", propietarioId)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -30,15 +62,35 @@ export async function listarMisAnuncios(propietarioId) {
 }
 
 export async function crearAnuncio(payload) {
-  const { data, error } = await supabase.from("anuncios").insert(payload).select().single();
+  const { anuncio, doc } = separarDoc(payload);
+  // El anuncio se inserta CON `documentos` (lo exige el guardia SEC-008), sin los campos sensibles.
+  const { data, error } = await supabase.from("anuncios").insert(anuncio).select().single();
   if (error) throw error;
-  return filaAItem(data);
+  if (tieneDoc(doc)) {
+    const { error: e2 } = await supabase.from("anuncios_documentacion").upsert({ anuncio_id: data.id, ...doc });
+    if (e2) throw e2;
+  }
+  return filaAItem({ ...data, anuncios_documentacion: doc });
 }
 
 export async function actualizarAnuncio(id, cambios) {
-  const { data, error } = await supabase.from("anuncios").update(cambios).eq("id", id).select().single();
-  if (error) throw error;
-  return filaAItem(data);
+  const { anuncio, doc } = separarDoc(cambios);
+  let data;
+  if (Object.keys(anuncio).length) {
+    const r = await supabase.from("anuncios").update(anuncio).eq("id", id).select().single();
+    if (r.error) throw r.error;
+    data = r.data;
+  } else {
+    const r = await supabase.from("anuncios").select().eq("id", id).single();
+    if (r.error) throw r.error;
+    data = r.data;
+  }
+  // Upsert por PK (anuncio_id): editar el precio y reenviar la misma matrícula NO duplica la fila.
+  if (tieneDoc(doc)) {
+    const { error } = await supabase.from("anuncios_documentacion").upsert({ anuncio_id: id, ...doc });
+    if (error) throw error;
+  }
+  return filaAItem({ ...data, anuncios_documentacion: doc });
 }
 
 /* Las fotos se guardan como URL pública completa; Storage necesita la ruta a secas
@@ -84,11 +136,12 @@ export async function eliminarAnuncio(id) {
   if (error) throw error;
 }
 
-// Solo la cuenta de administración los ve (política RLS "anuncios_select_admin").
+// Solo la cuenta de administración los ve (política RLS "anuncios_select_admin"). Embebe la
+// documentación para que el panel de revisión muestre matrícula/póliza/caducidad (RLS admin la deja).
 export async function listarAnunciosEnRevision() {
   const { data, error } = await supabase
     .from("anuncios")
-    .select("*")
+    .select("*, anuncios_documentacion(matricula, poliza, caducidad_seguro)")
     .eq("estado", "En revisión")
     .order("created_at", { ascending: true });
   if (error) throw error;

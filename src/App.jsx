@@ -52,6 +52,9 @@ const NOCHE_HASTA_HORA = 8;
    src/assets/fotos. Provisionales hasta tener fotos reales de las
    embarcaciones). */
 const HERO_FOTO = fotoHero;
+// Vídeo de fondo del hero de portada. Vive en public/ (no en src/assets) porque
+// pesa varios MB y no tiene sentido que Vite lo procese como módulo: se sirve tal cual.
+const HERO_VIDEO = "/videos/hero-mediterraneo.mp4";
 const MARINA_FOTO = fotoMarina;
 const VENTAJAS_FOTO = fotoVentajas;
 const FOOTER_FOTO = fotoFooter;
@@ -2709,8 +2712,8 @@ export default function App() {
           <button onClick={() => { setClaseReset("barco"); setSoloPatron(false); ir("explorar"); }}>Embarcaciones</button>
           <button onClick={() => { setClaseReset("experiencia"); ir("explorar"); }}>Experiencias</button>
           <button onClick={() => ir("ventajas")}>Ventajas</button>
-          {/* La cuenta de revisión no publica: ofrecerle "Publica lo tuyo" no tiene sentido. */}
-          {!esAdmin && <button onClick={irPublicar}>Publica lo tuyo</button>}
+          {/* La cuenta de revisión no publica: ofrecerle "Publica gratis" no tiene sentido. */}
+          {!esAdmin && <button className="nav-cta" onClick={irPublicar}>Publica GRATIS</button>}
           {cargandoSesion ? null : usuario ? (<><button className="perfil-link" onClick={() => ir("panel")}><span className="avatar-mini">{iniciales(usuario.nombre)}</span> {esAdmin ? "Administración" : "Mi panel"}</button><button className="btn-salir" onClick={cerrarSesion}><LogOut size={16} /></button></>)
             : <button className="btn-entrar" onClick={() => abrirAuth("entrar")}>Entrar</button>}
         </nav>
@@ -2720,7 +2723,10 @@ export default function App() {
       {vista === "home" && (
         <>
           <section className="hero">
-            <div className="hero-foto" style={{ backgroundImage: `linear-gradient(180deg, rgba(15,39,50,.35) 0%, rgba(15,39,50,.55) 55%, rgba(15,39,50,.88) 100%), url(${HERO_FOTO})` }} />
+            <video className="hero-video" autoPlay muted loop playsInline poster={HERO_FOTO}>
+              <source src={HERO_VIDEO} type="video/mp4" />
+            </video>
+            <div className="hero-velo" />
             <div className="hero-txt"><span className="eyebrow claro">Del Mediterráneo al Atlántico</span><h1 className="serif hero-h1">El mar, a tu manera</h1><p className="hero-p">Yates, veleros, lanchas, experiencias de pesca o buceo, y hasta un kayak. Con o sin patrón, reserva en minutos.</p></div>
             <div className="buscador">
               <div className="b-campo"><span className="b-lab">Dónde</span><select value={zona} onChange={(e) => setZona(e.target.value)}>{ZONAS.map((z) => <option key={z}>{z === "Todas" ? "Toda España" : z}</option>)}</select></div>
@@ -2900,6 +2906,8 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .links{display:flex;align-items:center;gap:4px}
 .links>button{padding:9px 13px;border-radius:9px;font-weight:500;font-size:14.5px;color:var(--slate);display:flex;align-items:center;gap:7px}
 .links>button:hover{background:var(--arena2);color:var(--tinta)}
+.nav-cta{background:var(--oro)!important;color:var(--noche)!important;border-radius:999px!important;padding:9px 18px!important;font-weight:700!important}
+.nav-cta:hover{background:#D9AD3F!important;color:var(--noche)!important}
 .btn-entrar{background:var(--noche)!important;color:var(--arena)!important;border-radius:999px!important;padding:9px 20px!important}
 .btn-entrar:hover{background:var(--noche2)!important}
 .perfil-link{font-weight:600!important;color:var(--tinta)!important}
@@ -2907,12 +2915,13 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .btn-salir{color:var(--muted)!important;padding:9px!important}
 .hamburguesa{display:none}
 
-.hero{position:relative;margin:clamp(14px,2vw,22px);border-radius:26px;overflow:hidden;background:var(--noche);color:var(--arena);padding:clamp(40px,7vw,74px) clamp(20px,5vw,60px) 0;min-height:clamp(420px,58vw,600px)}
-.hero-foto{position:absolute;inset:0;background-size:cover;background-position:center;pointer-events:none}
+.hero{position:relative;margin:clamp(14px,2vw,22px);border-radius:26px;overflow:hidden;background:var(--noche);color:var(--arena);padding:clamp(40px,7vw,74px) clamp(20px,5vw,60px) clamp(28px,4vw,44px);min-height:clamp(460px,62vw,640px);display:flex;flex-direction:column;justify-content:flex-end}
+.hero-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none}
+.hero-velo{position:absolute;inset:0;background:linear-gradient(180deg, rgba(12,32,42,.45) 0%, rgba(12,32,42,.4) 45%, rgba(12,32,42,.92) 100%);pointer-events:none}
 .hero-txt{position:relative;z-index:2;max-width:660px}
-.hero-h1{font-size:clamp(40px,7vw,76px);font-weight:600;color:var(--arena);margin:16px 0 14px}
-.hero-p{font-size:clamp(16px,2vw,19px);color:#E4EEF2;max-width:520px}
-.buscador{position:relative;z-index:2;display:flex;gap:6px;background:var(--arena);border-radius:16px;padding:8px;margin-top:clamp(32px,5vw,56px);box-shadow:0 26px 60px -24px rgba(0,20,25,.6);flex-wrap:wrap}
+.hero-h1{font-size:clamp(40px,7vw,78px);font-weight:600;color:var(--arena);margin:16px 0 14px;text-shadow:0 4px 24px rgba(0,10,15,.35)}
+.hero-p{font-size:clamp(16px,2vw,19px);color:#EEF5F7;max-width:520px;text-shadow:0 2px 12px rgba(0,10,15,.35)}
+.buscador{position:relative;z-index:2;display:flex;gap:6px;background:rgba(245,239,228,.96);backdrop-filter:blur(6px);border-radius:16px;padding:8px;margin-top:clamp(48px,6.5vw,76px);box-shadow:0 26px 60px -24px rgba(0,20,25,.6);flex-wrap:wrap}
 .b-campo{display:flex;flex-direction:column;gap:2px;padding:9px 14px;border-radius:11px;flex:1;min-width:130px}
 .b-campo:hover{background:var(--arena2)}
 .b-lab{font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.04em}
@@ -2927,12 +2936,12 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
 .link-mas{color:var(--mar);font-weight:600;font-size:15px}.link-mas:hover{color:var(--noche)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(258px,1fr));gap:22px}
 
-.cat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px}
-.cat{display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-start;gap:4px;background-color:var(--noche);background-size:cover;background-position:center;border-radius:16px;padding:18px;min-height:172px;text-align:left;transition:transform .16s,box-shadow .16s}
+.cat-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+.cat{display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-start;gap:3px;background-color:var(--noche);background-size:cover;background-position:center;border-radius:14px;padding:13px;min-height:148px;text-align:left;transition:transform .16s,box-shadow .16s}
 .cat:hover{transform:translateY(-3px);box-shadow:0 16px 34px -22px rgba(22,50,63,.5)}
-.cat-ico{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:rgba(245,239,228,.2);color:var(--arena);margin-bottom:6px}
-.cat-t{font-family:'Newsreader',serif;font-size:19px;font-weight:600;color:var(--arena)}
-.cat-d{font-size:13px;color:#D5E4E9}
+.cat-ico{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:rgba(245,239,228,.2);color:var(--arena);margin-bottom:4px}
+.cat-t{font-family:'Newsreader',serif;font-size:15px;font-weight:600;color:var(--arena);line-height:1.15}
+.cat-d{font-size:11px;color:#D5E4E9;line-height:1.25}
 
 .card{display:block;text-align:left;background:var(--blanco);border:1px solid var(--linea);border-radius:20px;overflow:hidden;width:100%;transition:transform .18s,box-shadow .18s}
 .card:hover{transform:translateY(-4px);box-shadow:0 24px 46px -24px rgba(22,50,63,.45)}
@@ -3337,9 +3346,11 @@ input,select,textarea{font-family:inherit;font-size:15px;color:var(--tinta)}
   .hamburguesa{display:block;color:var(--tinta)}
   .links{position:absolute;top:64px;right:14px;left:14px;flex-direction:column;align-items:stretch;background:var(--blanco);border:1px solid var(--linea);border-radius:16px;padding:8px;box-shadow:0 20px 40px -20px rgba(0,0,0,.3);display:none}
   .links.abierto{display:flex}.links>button{text-align:left;padding:12px}
+  .cat-grid{grid-template-columns:repeat(3,1fr)}
 }
 @media(max-width:600px){
   .fila{grid-template-columns:1fr}
+  .cat-grid{grid-template-columns:repeat(2,1fr)}
   .buscador{flex-direction:column;align-items:stretch}
   .buscador .b-campo{min-width:0}
   .b-btn{width:100%}
